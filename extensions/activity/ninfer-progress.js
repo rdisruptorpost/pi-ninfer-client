@@ -105,6 +105,11 @@ export function compactTokens(tokens) {
   return String(tokens);
 }
 
+/** Keep detailed progress out of sight for prompts that finish immediately. */
+export function shouldShowPromptProgress(elapsedMs, delayMs = 1000) {
+  return elapsedMs >= Math.max(0, delayMs);
+}
+
 /** Format exact non-cached prefill progress for the one-line activity UI. */
 export function formatPromptProgress(progress, width = 10) {
   const totalWork = progress.total - progress.cached;

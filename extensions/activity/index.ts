@@ -25,6 +25,7 @@ import { neonBounce, pacmanChase, shimmerOf, shimmerText, type AnimationFn } fro
 import {
   createProgressFetch,
   formatPromptProgress,
+  shouldShowPromptProgress,
 } from "./ninfer-progress.js";
 
 type Ui = {
@@ -58,6 +59,10 @@ const RARE_ANIMS: Array<{ name: string; fn: AnimationFn }> = [
 ];
 /* Chance of a rare variant instead of shimmer. 0 pins it to shimmer. */
 const ANIM_CHANCE = Number(process.env.PI_ACTIVITY_ANIM_CHANCE ?? "0.2");
+const configuredProgressDelay = Number(process.env.PI_ACTIVITY_PROGRESS_DELAY_MS ?? "1000");
+const PROGRESS_DELAY_MS = Number.isFinite(configuredProgressDelay) && configuredProgressDelay >= 0
+  ? configuredProgressDelay
+  : 1000;
 
 const N = (n: number) => n.toLocaleString("en-US");
 const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
@@ -156,9 +161,12 @@ export function createActivity(pi: ExtensionAPI): void {
         // the old prompt/elapsed quotient that appeared to slow down over time.
         const size = promptTokens >= 1000 ? `${(promptTokens / 1000).toFixed(0)}k` : `${promptTokens}`;
         const media = promptImages ? ` + ${promptImages} image${promptImages === 1 ? "" : "s"}` : "";
-        label = promptProgress
+        label = promptProgress && shouldShowPromptProgress(
+          promptProgress.timeMs,
+          PROGRESS_DELAY_MS,
+        )
           ? `reading ${formatPromptProgress(promptProgress)}${media}`
-          : `reading ~${size} tokens${media}`;
+          : `reading ${promptProgress ? "" : "~"}${size} tokens${media}`;
       }
       try {
         if (anim.name === "shimmer") {

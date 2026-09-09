@@ -115,7 +115,9 @@ symlinkSync(
   join(activityWork, "node_modules/@earendil-works/pi-ai"),
   "dir",
 );
+process.env.PI_ACTIVITY_PROGRESS_DELAY_MS = "0";
 const activityModule = await jiti.import(join(activityWork, "index.ts"));
+delete process.env.PI_ACTIVITY_PROGRESS_DELAY_MS;
 const providerRegistrations = [];
 const activityHandlers = new Map();
 activityModule.createActivity({

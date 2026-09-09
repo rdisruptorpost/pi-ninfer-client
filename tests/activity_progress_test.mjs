@@ -3,6 +3,7 @@ import {
   createProgressFetch,
   formatPromptProgress,
   parsePromptProgressEvent,
+  shouldShowPromptProgress,
 } from "../extensions/activity/ninfer-progress.js";
 
 const progressEvent =
@@ -19,6 +20,8 @@ assert.deepEqual(parsePromptProgressEvent(progressEvent), {
   timeMs: 500,
 });
 assert.equal(parsePromptProgressEvent("data: [DONE]"), undefined);
+assert.equal(shouldShowPromptProgress(999), false);
+assert.equal(shouldShowPromptProgress(1000), true);
 assert.equal(
   parsePromptProgressEvent(
     'data: {"prompt_progress":{"total":10,"cache":8,"processed":7,"time_ms":1}}',
