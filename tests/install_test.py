@@ -12,7 +12,7 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INSTALLER = ROOT / "install.sh"
+INSTALLER = Path(os.environ.get("PI_INSTALLER_PATH", ROOT / "install.sh"))
 SERVER_URL = "http://server.example.test"
 
 
@@ -46,7 +46,18 @@ def fake_environment(base: Path) -> tuple[dict[str, str], Path]:
         "echo READY\n",
     )
     executable(fake_bin / "npm", f"#!/usr/bin/env bash\nprintf '%s\\n' '{pi_root}'\n")
-    executable(fake_bin / "curl", "#!/usr/bin/env bash\nexit 0\n")
+    executable(
+        fake_bin / "curl",
+        "#!/usr/bin/env bash\n"
+        "output=''\n"
+        "while [ $# -gt 0 ]; do\n"
+        "  if [ \"$1\" = -o ]; then output=\"$2\"; shift 2; else shift; fi\n"
+        "done\n"
+        "if [ -n \"$output\" ] && [ -n \"${PI_TEST_SOURCE_ARCHIVE:-}\" ]; then\n"
+        "  cp \"$PI_TEST_SOURCE_ARCHIVE\" \"$output\"\n"
+        "fi\n"
+        "exit 0\n",
+    )
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
     env["PI_CODING_AGENT_DIR"] = str(agent_dir)
@@ -104,8 +115,10 @@ def main() -> None:
     assert "--provider ninfer " in output
     checks += 3
 
+    bad_env, _ = fake_environment(Path(tempfile.mkdtemp(prefix="install-bad-")))
     bad = subprocess.run(
         ["bash", str(INSTALLER), "--profile", "unknown"],
+        env=bad_env,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
