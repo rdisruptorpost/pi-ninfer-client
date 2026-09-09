@@ -105,4 +105,83 @@ symlinkSync(
   "dir",
 );
 await jiti.import(join(tuiWork, "index.ts"));
+
+const activityWork = join(work, "activity");
+cpSync(join(root, "extensions/activity"), activityWork, { recursive: true });
+mkdirSync(join(activityWork, "node_modules/@earendil-works"), { recursive: true });
+symlinkSync(codingAgent, join(activityWork, "node_modules/@earendil-works/pi-coding-agent"), "dir");
+symlinkSync(
+  join(codingAgent, "node_modules/@earendil-works/pi-ai"),
+  join(activityWork, "node_modules/@earendil-works/pi-ai"),
+  "dir",
+);
+const activityModule = await jiti.import(join(activityWork, "index.ts"));
+const providerRegistrations = [];
+const activityHandlers = new Map();
+activityModule.createActivity({
+  on(name, handler) { activityHandlers.set(name, handler); },
+  registerProvider(name, config) { providerRegistrations.push({ name, config }); },
+});
+assert.equal(providerRegistrations.length, 1);
+assert.equal(providerRegistrations[0].name, "ninfer-rtx6000");
+assert.equal(providerRegistrations[0].config.api, "openai-completions");
+assert.equal(typeof providerRegistrations[0].config.streamSimple, "function");
+
+const workingLines = [];
+activityHandlers.get("session_start")({}, {
+  ui: {
+    setWorkingMessage(line) { workingLines.push(line.replace(/\x1b\[[0-9;]*m/g, "")); },
+    notify() {},
+  },
+});
+activityHandlers.get("turn_start")({ turnIndex: 1 });
+
+let sentPayload;
+const completionId = "chatcmpl-progress-test";
+const sse = [
+  { id: completionId, model: "qwen3.8-27b", choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] },
+  { id: completionId, model: "qwen3.8-27b", choices: [{ index: 0, delta: {}, finish_reason: null }], prompt_progress: { total: 143000, cache: 130000, processed: 130000, time_ms: 0 } },
+  { id: completionId, model: "qwen3.8-27b", choices: [{ index: 0, delta: {}, finish_reason: null }], prompt_progress: { total: 143000, cache: 130000, processed: 135000, time_ms: 500 } },
+  { id: completionId, model: "qwen3.8-27b", choices: [{ index: 0, delta: {}, finish_reason: null }], prompt_progress: { total: 143000, cache: 130000, processed: 143000, time_ms: 1300 } },
+  { id: completionId, model: "qwen3.8-27b", choices: [{ index: 0, delta: { content: "OK" }, finish_reason: null }] },
+  { id: completionId, model: "qwen3.8-27b", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+  { id: completionId, model: "qwen3.8-27b", choices: [], usage: { prompt_tokens: 143000, completion_tokens: 1, total_tokens: 143001, prompt_tokens_details: { cached_tokens: 130000 } } },
+].map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n";
+
+const model = {
+  id: "qwen3.8-27b",
+  name: "Qwen3.8-27B",
+  api: "openai-completions",
+  provider: "ninfer-rtx6000",
+  baseUrl: "http://ninfer.invalid/v1",
+  reasoning: true,
+  input: ["text", "image"],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 262144,
+  maxTokens: 16384,
+};
+const stream = providerRegistrations[0].config.streamSimple(model, {
+  systemPrompt: "",
+  messages: [{ role: "user", content: "Say OK", timestamp: Date.now() }],
+  tools: [],
+}, {
+  apiKey: "test-only-key",
+  maxTokens: 1,
+  onPayload: async (payload) => {
+    await activityHandlers.get("before_provider_request")({ payload });
+    return payload;
+  },
+  fetch: async (_input, init) => {
+    sentPayload = JSON.parse(String(init?.body));
+    return new Response(sse, { headers: { "content-type": "text/event-stream" } });
+  },
+});
+const streamedEvents = [];
+for await (const event of stream) streamedEvents.push(event);
+activityHandlers.get("session_shutdown")();
+
+assert.equal(sentPayload.return_progress, true);
+assert.ok(workingLines.some((line) => line.includes("5.0k/13k new")));
+const doneEvent = streamedEvents.find((event) => event.type === "done");
+assert.equal(doneEvent.message.content.find((part) => part.type === "text").text, "OK");
 console.log("client-build test passed");

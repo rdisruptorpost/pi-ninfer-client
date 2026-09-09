@@ -215,15 +215,20 @@ else { Write-Host "    linked 3 dependencies" }
 Write-Host "==> installing the activity extension"
 $Act = "$AgentDir\extensions\activity"
 Remove-LinkOrDir "$Act\node_modules\@earendil-works\pi-coding-agent"
+Remove-LinkOrDir "$Act\node_modules\@earendil-works\pi-ai"
 New-Item -ItemType Directory -Force -Path "$Act\node_modules\@earendil-works" | Out-Null
 Copy-Item "$Here\extensions\activity\index.ts" "$Act\index.ts" -Force
 Copy-Item "$Here\extensions\activity\anim.ts" "$Act\anim.ts" -Force
+Copy-Item "$Here\extensions\activity\ninfer-progress.js" "$Act\ninfer-progress.js" -Force
 Copy-Item "$Here\extensions\activity\LICENSE.animations" "$Act\LICENSE.animations" -Force -ErrorAction SilentlyContinue
 Write-Utf8NoBom "$Act\package.json" '{ "name": "activity", "private": true, "type": "module" }'
 New-Item -ItemType Junction -Force -Path "$Act\node_modules\@earendil-works\pi-coding-agent" -Target $Ca | Out-Null
-if (Test-Path "$Act\node_modules\@earendil-works\pi-coding-agent\package.json") {
-  Write-Host "    activity (verbose progress + tok/s)"
-} else { Write-Warning "activity dep unresolved; it will not load" }
+New-Item -ItemType Junction -Force -Path "$Act\node_modules\@earendil-works\pi-ai" -Target "$Ca\node_modules\@earendil-works\pi-ai" | Out-Null
+$activityMissing = @("@earendil-works\pi-ai","@earendil-works\pi-coding-agent") |
+  Where-Object { -not (Test-Path "$Act\node_modules\$_\package.json") }
+if (-not $activityMissing) {
+  Write-Host "    activity (exact NInfer prefill progress + tok/s)"
+} else { Write-Warning "activity deps unresolved; it will not load" }
 
 Write-Host "==> installing ninfer-tui"
 $Tui = "$AgentDir\extensions\ninfer-tui"

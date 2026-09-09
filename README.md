@@ -80,7 +80,7 @@ Restart Pi after an install or update so every extension is reloaded.
 | permission policy | broad read access, guarded writes, and hard-denied credential paths |
 | command judge | model-reviewed shell commands with `safe` and `auto` postures |
 | NInfer TUI | client revision, model, effort, cache/performance, and judge status in the terminal UI |
-| activity | per-turn prompt, generation, tool, and throughput telemetry |
+| activity | exact cached/prefill progress and ETA, plus generation/tool throughput telemetry |
 | fast compact | cache-friendly compaction with a bounded cold fallback |
 | image window | drops old request images before the media budget is exhausted |
 | auto continue | resumes responses that stop at the output limit |

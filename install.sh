@@ -244,13 +244,19 @@ done
   || echo "    WARNING: judge deps unresolved; it will be skipped fail-safe (more prompts, never fewer)"
 
 ACT="$AGENT_DIR/extensions/activity"
-install_extension activity "@earendil-works/pi-coding-agent"
+install_extension activity "@earendil-works/pi-coding-agent" "@earendil-works/pi-ai"
 cp "$HERE"/extensions/activity/anim.ts "$ACT"/ 2>/dev/null || true
+cp "$HERE"/extensions/activity/ninfer-progress.js "$ACT"/
 cp "$HERE"/extensions/activity/LICENSE.animations "$ACT"/ 2>/dev/null || true
 ln -sfn "$CA" "$ACT/node_modules/@earendil-works/pi-coding-agent"
-[ -e "$ACT/node_modules/@earendil-works/pi-coding-agent/package.json" ] \
-  && echo "    activity (verbose progress + tok/s)" \
-  || echo "    WARNING: activity dep unresolved; it will not load"
+ln -sfn "$CA/node_modules/@earendil-works/pi-ai" "$ACT/node_modules/@earendil-works/pi-ai"
+activity_ok=1
+for m in @earendil-works/pi-ai @earendil-works/pi-coding-agent; do
+  [ -e "$ACT/node_modules/$m/package.json" ] || activity_ok=0
+done
+[ "$activity_ok" = 1 ] \
+  && echo "    activity (exact NInfer prefill progress + tok/s)" \
+  || echo "    WARNING: activity deps unresolved; it will not load"
 
 # ninfer-tui is multi-file, so it is copied wholesale rather than via
 # install_extension (which handles single index.ts extensions).

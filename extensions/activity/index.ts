@@ -13,13 +13,31 @@
  */
 
 import { appendFileSync } from "node:fs";
+import { streamSimple as streamOpenAICompletions } from "@earendil-works/pi-ai/api/openai-completions";
+import type {
+  AssistantMessageEventStream,
+  Context,
+  Model,
+  SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { neonBounce, pacmanChase, shimmerOf, shimmerText, type AnimationFn } from "./anim.ts";
+import {
+  createProgressFetch,
+  formatPromptProgress,
+} from "./ninfer-progress.js";
 
 type Ui = {
   notify(message: string, type?: "info" | "warning" | "error"): void;
   setStatus?(key: string, text: string): void;
   setWorkingMessage?(text: string): void;
+};
+
+type PromptProgress = {
+  total: number;
+  cached: number;
+  processed: number;
+  timeMs: number;
 };
 
 /* Animated working line. Vendored from pi-animations (MIT). Rolled once per
@@ -93,12 +111,12 @@ export function createActivity(pi: ExtensionAPI): void {
    * is the server reading the prompt -- at ~3,900 tok/s a 100k context is 25s
    * of silence, which is what that long unexplained pause actually was. */
   let phaseLabel = "reading context";
-  /* Measured from the outgoing payload, so the wait can say how much work it is
-   * and how fast it is going. The client cannot see the server's progress
-   * through prefill, but it knows the size going in and the elapsed time, and
-   * their ratio is the number worth reporting when something feels slow. */
+  /* The outgoing payload supplies an early size estimate. A current NInfer
+   * server replaces it with exact, opt-in prompt-progress observations once
+   * the request is admitted. */
   let promptTokens = 0;
   let promptImages = 0;
+  let promptProgress: PromptProgress | undefined;
   let prefillRate = 0;
   let sawReasoning = false;
   let sawContent = false;
@@ -133,14 +151,14 @@ export function createActivity(pi: ExtensionAPI): void {
       const tail = suffix.length ? "  " + suffix.join(" · ") : "";
       let label = stepLabel || phaseLabel;
       if (!stepLabel && phaseLabel === "reading context" && promptTokens > 0) {
-        // How much there is to read, and how fast it is being read. The rate
-        // only appears once the first token lands, because until then there is
-        // nothing to divide by.
+        // Before admission this is an honest size estimate and elapsed timer.
+        // Once NInfer reports progress, show exact non-cached work instead of
+        // the old prompt/elapsed quotient that appeared to slow down over time.
         const size = promptTokens >= 1000 ? `${(promptTokens / 1000).toFixed(0)}k` : `${promptTokens}`;
         const media = promptImages ? ` + ${promptImages} image${promptImages === 1 ? "" : "s"}` : "";
-        const elapsed = stepStart ? (Date.now() - stepStart) / 1000 : 0;
-        const sofar = elapsed > 0.5 ? ` · ${Math.round(promptTokens / elapsed / 100) / 10}k tok/s` : "";
-        label = `reading ${size} tokens${media}${sofar}`;
+        label = promptProgress
+          ? `reading ${formatPromptProgress(promptProgress)}${media}`
+          : `reading ~${size} tokens${media}`;
       }
       try {
         if (anim.name === "shimmer") {
@@ -184,6 +202,48 @@ export function createActivity(pi: ExtensionAPI): void {
     ticker = undefined;
   };
 
+  const receivePromptProgress = (progress: PromptProgress) => {
+    promptProgress = progress;
+    promptTokens = progress.total;
+    if (progress.processed === progress.total && progress.timeMs > 0) {
+      const computed = progress.total - progress.cached;
+      prefillRate = computed / (progress.timeMs / 1000);
+    }
+    if (!stepLabel) phaseLabel = "reading context";
+    paint();
+  };
+
+  /* NInfer extends otherwise-standard OpenAI SSE chunks with prompt_progress.
+   * Pi's stock OpenAI parser intentionally ignores unknown top-level fields,
+   * so override only our provider and observe those bytes while forwarding the
+   * original stream unchanged. Older NInfer servers ignore return_progress and
+   * retain the estimated/indeterminate display above. */
+  const ninferStream = (
+    model: Model<any>,
+    context: Context,
+    options?: SimpleStreamOptions,
+  ): AssistantMessageEventStream => {
+    const originalOnPayload = options?.onPayload;
+    const baseFetch = options?.fetch ?? globalThis.fetch;
+    return streamOpenAICompletions(model as Model<"openai-completions">, context, {
+      ...options,
+      fetch: createProgressFetch(baseFetch, receivePromptProgress),
+      onPayload: async (payload, requestModel) => {
+        const replacement = await originalOnPayload?.(payload, requestModel);
+        const finalPayload = replacement ?? payload;
+        if (typeof finalPayload !== "object" || finalPayload === null || Array.isArray(finalPayload)) {
+          return finalPayload;
+        }
+        return { ...finalPayload, return_progress: true };
+      },
+    });
+  };
+
+  pi.registerProvider(process.env.PI_NINFER_PROVIDER ?? "ninfer-rtx6000", {
+    api: "openai-completions",
+    streamSimple: ninferStream,
+  });
+
   const footer = () => {
     // Off by default: ninfer-tui's themed footer already carries tokens and
     // tok/s, and a second status line pushed the footer to three rows. The
@@ -204,6 +264,8 @@ export function createActivity(pi: ExtensionAPI): void {
   // is about to read -- including any trimming other extensions have applied.
   pi.on("before_provider_request", (event: any) => {
     try {
+      promptProgress = undefined;
+      prefillRate = 0;
       const msgs = event?.payload?.messages;
       if (!Array.isArray(msgs)) return undefined;
       let chars = 0, images = 0;
@@ -237,7 +299,7 @@ export function createActivity(pi: ExtensionAPI): void {
     lastSeenLen = new Map();
     stepLabel = ""; stepStart = Date.now();
     phaseLabel = "reading context"; sawReasoning = false; sawContent = false;
-    prefillRate = 0;
+    promptProgress = undefined; prefillRate = 0;
     anim = Math.random() < ANIM_CHANCE
       ? RARE_ANIMS[Math.floor(Math.random() * RARE_ANIMS.length)]
       : DEFAULT_ANIM;
@@ -262,10 +324,12 @@ export function createActivity(pi: ExtensionAPI): void {
       const now = Date.now();
       if (!firstDeltaAt) {
         firstDeltaAt = now;
-        // Everything before the first token: queue, media prepare, and prefill.
-        // Dividing the prompt by it gives the effective read rate.
-        const waited = (now - (stepStart || now)) / 1000;
-        if (waited > 0.05 && promptTokens > 0) prefillRate = promptTokens / waited;
+        // Older servers have no exact progress event. Preserve a terminal
+        // effective rate for them, but never present it as live progress.
+        if (!promptProgress) {
+          const waited = (now - (stepStart || now)) / 1000;
+          if (waited > 0.05 && promptTokens > 0) prefillRate = promptTokens / waited;
+        }
       }
       else if (lastDeltaAt && now - lastDeltaAt < GAP_MAX_MS) activeMs += now - lastDeltaAt;
       lastDeltaAt = now;
@@ -291,6 +355,7 @@ export function createActivity(pi: ExtensionAPI): void {
     }
     stepLabel = ""; phaseLabel = "reading context";
     sawReasoning = false; sawContent = false;
+    promptProgress = undefined; prefillRate = 0;
     stepStart = Date.now();
     paint();
   });
@@ -315,12 +380,21 @@ export function createActivity(pi: ExtensionAPI): void {
 
     const bits = [`▸ done in ${secs(wall)}`, `${N(out)} tok`];
     if (rate > 0) bits.push(`${Math.round(rate)} tok/s observed`);
-    // The read rate covers queue + media prepare + prefill. A healthy figure at
-    // depth is a few thousand tok/s; a sudden collapse is the signal that
-    // something in preparation has gone wrong, so it is worth reporting.
+    // Current NInfer reports exact, non-cached prefill work and elapsed time.
+    // Older servers retain the end-to-end estimate as a compatibility fallback.
     if (prefillRate > 0) {
       const media = promptImages ? `, ${promptImages} img` : "";
-      bits.push(`read ${N(Math.round(promptTokens / 1000))}k${media} at ${Math.round(prefillRate)} tok/s`);
+      const readTokens = promptProgress
+        ? promptProgress.total - promptProgress.cached
+        : promptTokens;
+      const cached = promptProgress?.cached
+        ? `, ${N(promptProgress.cached)} cached`
+        : "";
+      bits.push(`prefilled ${N(readTokens)}${media}${cached} at ${Math.round(prefillRate)} tok/s`);
+    } else if (
+      promptProgress && promptProgress.cached === promptProgress.total && promptProgress.total > 0
+    ) {
+      bits.push(`${N(promptProgress.total)} prompt tokens cached`);
     }
     if (toolCount) bits.push(`${toolCount} tool call${toolCount === 1 ? "" : "s"}`);
     const avg = sessionActiveMs > 300 ? sessionTokens / (sessionActiveMs / 1000) : 0;

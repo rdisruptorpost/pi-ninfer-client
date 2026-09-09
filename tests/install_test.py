@@ -105,6 +105,11 @@ def main() -> None:
         "commit": TEST_COMMIT,
     }
     assert (agent / "extensions" / "ninfer-tui" / "client-build.ts").is_file()
+    assert (agent / "extensions" / "activity" / "ninfer-progress.js").is_file()
+    assert (
+        agent / "extensions" / "activity" / "node_modules" /
+        "@earendil-works" / "pi-ai" / "package.json"
+    ).is_file()
     for extension in (
         "command-judge", "activity", "ninfer-tui", "effort", "digest",
         "fast-compact", "image-window", "auto-continue",
@@ -113,7 +118,7 @@ def main() -> None:
     effort_source = (agent / "extensions" / "effort" / "index.ts").read_text(encoding="utf-8")
     assert 'registerCommand("effort"' in effort_source
     assert 'registerCommand("thinking"' not in effort_source
-    checks += 13
+    checks += 15
 
     existing = {"providers": {"ninfer": {"baseUrl": "http://existing.example.test/v1", "models": []}}}
     replaced, _, replaced_agent = run_install(existing)
