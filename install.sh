@@ -45,10 +45,10 @@ fi
 HERE="$SOURCE_DIR"
 BASE_URL="${PI_NINFER_URL:-}"
 API_KEY="${PI_NINFER_API_KEY:-}"
-PROFILE="${PI_NINFER_PROFILE:-rtx6000}"
 SERVER_HOST="${PI_NINFER_HOST:-}"
 SERVER_PORT="${PI_NINFER_PORT:-}"
 SERVER_SCHEME="${PI_NINFER_SCHEME:-http}"
+PROVIDER_ID="ninfer-rtx6000"
 while [ $# -gt 0 ]; do
   case "$1" in
     --url) BASE_URL="$2"; shift 2;;
@@ -56,15 +56,9 @@ while [ $# -gt 0 ]; do
     --port) SERVER_PORT="$2"; shift 2;;
     --scheme) SERVER_SCHEME="$2"; shift 2;;
     --key) API_KEY="$2"; shift 2;;
-    --profile) PROFILE="$2"; shift 2;;
     *) echo "unknown option: $1" >&2; exit 2;;
   esac
 done
-case "$PROFILE" in
-  default) PROVIDER_ID="ninfer";;
-  rtx6000) PROVIDER_ID="ninfer-rtx6000";;
-  *) echo "unknown install profile: $PROFILE (expected default or rtx6000)" >&2; exit 2;;
-esac
 
 need_tty () {
   if ! { : < /dev/tty; } 2>/dev/null; then
@@ -127,49 +121,16 @@ echo "    web access, permission system, subagents"
 echo "==> writing config to $AGENT_DIR"
 mkdir -p "$AGENT_DIR/agents" "$AGENT_DIR/extensions/pi-permission-system"
 backup "$AGENT_DIR/models.json"
-# Replace only the selected provider while retaining separately configured
-# endpoints. The RTX profile advertises the qualified 262K context and the
-# compatibility flags used by add-rtx6000.sh.
+# This package intentionally configures one NInfer endpoint at a time. Replace
+# the provider map with the qualified RTX PRO 6000 configuration.
 PI_INSTALL_BASE_URL="$BASE_URL/v1" PI_INSTALL_API_KEY="$API_KEY" \
-python3 - "$AGENT_DIR/models.json" "$HERE/templates/models.json" "$PROFILE" <<'MODELS_PY'
+python3 - "$AGENT_DIR/models.json" "$HERE/templates/models.json" <<'MODELS_PY'
 import json, os, pathlib, sys, tempfile
 path = pathlib.Path(sys.argv[1])
-fresh = json.loads(pathlib.Path(sys.argv[2]).read_text())
-profile = sys.argv[3]
-provider = fresh["providers"]["ninfer"]
+config = json.loads(pathlib.Path(sys.argv[2]).read_text())
+provider = config["providers"]["ninfer-rtx6000"]
 provider["baseUrl"] = os.environ["PI_INSTALL_BASE_URL"]
 provider["apiKey"] = os.environ["PI_INSTALL_API_KEY"]
-provider_id = "ninfer"
-if profile == "rtx6000":
-    provider_id = "ninfer-rtx6000"
-    provider["authHeader"] = True
-    provider["compat"] = {
-        "supportsStore": False,
-        "supportsDeveloperRole": True,
-        "supportsReasoningEffort": True,
-        "supportsUsageInStreaming": True,
-        "supportsFinishReason": True,
-        "maxTokensField": "max_tokens",
-        "requiresThinkingAsText": False,
-        "supportsStrictMode": False,
-        "sendSessionAffinityHeaders": False,
-    }
-    model = provider["models"][0]
-    model["name"] = "Qwen3.8-27B NVFP4 (RTX PRO 6000)"
-    model["contextWindow"] = 262144
-fresh = {"providers": {provider_id: provider}}
-if path.exists():
-    try:
-        config = json.loads(path.read_text(encoding="utf-8-sig"))
-    except Exception:
-        config = fresh
-    else:
-        if not isinstance(config, dict) or not isinstance(config.get("providers", {}), dict):
-            config = fresh
-        else:
-            config.setdefault("providers", {})[provider_id] = provider
-else:
-    config = fresh
 fd, temporary = tempfile.mkstemp(prefix="models.", suffix=".json", dir=path.parent)
 with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
     json.dump(config, handle, indent=2, ensure_ascii=False)

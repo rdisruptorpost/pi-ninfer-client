@@ -64,14 +64,14 @@ def fake_environment(base: Path) -> tuple[dict[str, str], Path]:
     return env, agent_dir
 
 
-def run_profile(profile: str, existing: dict | None = None) -> tuple[dict, str, Path]:
-    base = Path(tempfile.mkdtemp(prefix=f"install-{profile}-"))
+def run_install(existing: dict | None = None) -> tuple[dict, str, Path]:
+    base = Path(tempfile.mkdtemp(prefix="install-rtx6000-"))
     env, agent_dir = fake_environment(base)
     if existing is not None:
         agent_dir.mkdir(parents=True, exist_ok=True)
         (agent_dir / "models.json").write_text(json.dumps(existing), encoding="utf-8")
     result = subprocess.run(
-        ["bash", str(INSTALLER), "--profile", profile, "--url", SERVER_URL, "--key", "test-only-key"],
+        ["bash", str(INSTALLER), "--url", SERVER_URL, "--key", "test-only-key"],
         env=env,
         text=True,
         stdout=subprocess.PIPE,
@@ -85,7 +85,7 @@ def run_profile(profile: str, existing: dict | None = None) -> tuple[dict, str, 
 def main() -> None:
     checks = 0
 
-    rtx, output, agent = run_profile("rtx6000")
+    rtx, output, agent = run_install()
     provider = rtx["providers"]["ninfer-rtx6000"]
     model = provider["models"][0]
     assert set(rtx["providers"]) == {"ninfer-rtx6000"}
@@ -104,31 +104,18 @@ def main() -> None:
     checks += 9
 
     existing = {"providers": {"ninfer": {"baseUrl": "http://existing.example.test/v1", "models": []}}}
-    merged, _, _ = run_profile("rtx6000", existing)
-    assert set(merged["providers"]) == {"ninfer", "ninfer-rtx6000"}
-    assert merged["providers"]["ninfer"]["baseUrl"] == "http://existing.example.test/v1"
-    checks += 2
-
-    default, output, _ = run_profile("default")
-    assert set(default["providers"]) == {"ninfer"}
-    assert default["providers"]["ninfer"]["models"][0]["contextWindow"] == 180224
-    assert "--provider ninfer " in output
+    replaced, _, replaced_agent = run_install(existing)
+    assert set(replaced["providers"]) == {"ninfer-rtx6000"}
+    backups = list(replaced_agent.glob("models.json.bak-*"))
+    assert len(backups) == 1
+    assert json.loads(backups[0].read_text(encoding="utf-8")) == existing
     checks += 3
-
-    bad_env, _ = fake_environment(Path(tempfile.mkdtemp(prefix="install-bad-")))
-    bad = subprocess.run(
-        ["bash", str(INSTALLER), "--profile", "unknown"],
-        env=bad_env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert bad.returncode == 2 and "unknown install profile" in bad.stdout
-    checks += 1
 
     source = INSTALLER.read_text(encoding="utf-8")
     assert "pi-permission-system@31.1.3" in source
-    checks += 1
+    assert "--profile" not in source
+    assert "PI_NINFER_PROFILE" not in source
+    checks += 3
     print(f"{checks}/{checks} installer checks passed")
 
 

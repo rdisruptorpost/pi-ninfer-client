@@ -8,7 +8,6 @@ param(
   [string]$ServerHost = "",
   [string]$ServerPort = "",
   [ValidateSet("http", "https")][string]$Scheme = "http",
-  [ValidateSet("default", "rtx6000")][string]$Profile = "rtx6000",
   [string]$Key = ""
 )
 $ErrorActionPreference = "Stop"
@@ -29,7 +28,7 @@ if (-not $Here -or -not (Test-Path "$Here\templates\models.json")) {
       Select-Object -First 1
     if (-not $BundledInstaller) { throw "install.ps1 not found in the GitHub archive" }
     & $BundledInstaller.FullName -Url $Url -ServerHost $ServerHost -ServerPort $ServerPort `
-      -Scheme $Scheme -Profile $Profile -Key $Key
+      -Scheme $Scheme -Key $Key
   } finally {
     Remove-Item $BootstrapWork -Recurse -Force -ErrorAction SilentlyContinue
   }
@@ -76,9 +75,7 @@ if (-not $Url -and $env:PI_NINFER_URL) { $Url = $env:PI_NINFER_URL }
 if (-not $ServerHost -and $env:PI_NINFER_HOST) { $ServerHost = $env:PI_NINFER_HOST }
 if (-not $ServerPort -and $env:PI_NINFER_PORT) { $ServerPort = $env:PI_NINFER_PORT }
 if ($env:PI_NINFER_SCHEME) { $Scheme = $env:PI_NINFER_SCHEME }
-if ($env:PI_NINFER_PROFILE) { $Profile = $env:PI_NINFER_PROFILE }
 if ($Scheme -notin @("http", "https")) { throw "PI_NINFER_SCHEME must be http or https" }
-if ($Profile -notin @("default", "rtx6000")) { throw "PI_NINFER_PROFILE must be default or rtx6000" }
 if (-not $Url) {
   if (-not $ServerHost) { $ServerHost = Read-Host "NInfer server IP or hostname" }
   if (-not $ServerPort) { $ServerPort = Read-Host "NInfer server port" }
@@ -103,7 +100,7 @@ if (-not [uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$parsedUrl) -or
     $parsedUrl.Scheme -notin @("http", "https") -or $parsedUrl.PathAndQuery -ne "/") {
   throw "server URL must be an http(s) origin with no path"
 }
-if ($Profile -eq "rtx6000") { $ProviderId = "ninfer-rtx6000" } else { $ProviderId = "ninfer" }
+$ProviderId = "ninfer-rtx6000"
 
 if (-not (Get-Command pi -ErrorAction SilentlyContinue)) { throw "pi not found on PATH. Install pi first." }
 if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
@@ -131,39 +128,11 @@ Write-Host "    web access, permission system, subagents"
 Write-Host "==> writing config to $AgentDir"
 New-Item -ItemType Directory -Force -Path "$AgentDir\agents", "$AgentDir\extensions\pi-permission-system" | Out-Null
 Backup "$AgentDir\models.json"
-$FreshModels = (Get-Content "$Here\templates\models.json" -Raw).Replace('__BASE_URL__', "$Url/v1").Replace('__API_KEY__', $Key) | ConvertFrom-Json
-$FreshProvider = $FreshModels.providers.ninfer
-if ($Profile -eq "rtx6000") {
-  $FreshProvider | Add-Member -NotePropertyName authHeader -NotePropertyValue $true -Force
-  $FreshProvider | Add-Member -NotePropertyName compat -NotePropertyValue ([pscustomobject][ordered]@{
-    supportsStore = $false
-    supportsDeveloperRole = $true
-    supportsReasoningEffort = $true
-    supportsUsageInStreaming = $true
-    supportsFinishReason = $true
-    maxTokensField = "max_tokens"
-    requiresThinkingAsText = $false
-    supportsStrictMode = $false
-    sendSessionAffinityHeaders = $false
-  }) -Force
-  $FreshProvider.models[0].name = "Qwen3.8-27B NVFP4 (RTX PRO 6000)"
-  $FreshProvider.models[0].contextWindow = 262144
-}
+$ModelsConfig = Get-Content "$Here\templates\models.json" -Raw | ConvertFrom-Json
+$FreshProvider = $ModelsConfig.providers.'ninfer-rtx6000'
+$FreshProvider.baseUrl = "$Url/v1"
+$FreshProvider.apiKey = $Key
 $ModelsPath = "$AgentDir\models.json"
-if (Test-Path $ModelsPath) {
-  try { $ModelsConfig = Get-Content $ModelsPath -Raw | ConvertFrom-Json }
-  catch {
-    Write-Warning "existing models.json is invalid; replacing it with the bundle template"
-    $ModelsConfig = $FreshModels
-  }
-} else {
-  $ModelsConfig = $FreshModels
-}
-if (-not ($ModelsConfig.PSObject.Properties.Name -contains "providers") -or $null -eq $ModelsConfig.providers) {
-  $ModelsConfig | Add-Member -NotePropertyName providers -NotePropertyValue ([pscustomobject]@{}) -Force
-}
-# Refresh only the selected endpoint and preserve every other provider.
-$ModelsConfig.providers | Add-Member -NotePropertyName $ProviderId -NotePropertyValue $FreshProvider -Force
 Write-Utf8NoBom $ModelsPath (($ModelsConfig | ConvertTo-Json -Depth 20) + "`n")
 Assert-ValidJson "$AgentDir\models.json"
 Backup "$AgentDir\extensions\pi-permission-system\config.json"

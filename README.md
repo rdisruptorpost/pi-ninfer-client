@@ -1,9 +1,9 @@
 # Pi client for NInfer
 
-A reproducible Pi client configuration for Qwen3.8-27B served by NInfer. It
-installs the model provider, command judge, custom terminal UI, performance
-telemetry, warm-prefix compaction, image-window management, automatic output
-continuation, web access, and subagent presets.
+A reproducible Pi client configuration for Qwen3.8-27B served by NInfer on an
+RTX PRO 6000. It installs the model provider, command judge, custom terminal
+UI, performance telemetry, warm-prefix compaction, image-window management,
+automatic output continuation, web access, and subagent presets.
 
 This repository contains client configuration only. Model weights, API keys,
 runtime configuration, conversation logs, benchmark transcripts, build output,
@@ -37,10 +37,10 @@ prompts for the following locally:
 2. NInfer server port
 3. NInfer API key, entered without echo
 
-No inference endpoint or API key is embedded in this repository. The RTX PRO
-6000 profile is the default. Use `--profile default` on Linux/macOS, or
-`-Profile default` from a checked-out PowerShell script, for the original
-provider profile.
+No inference endpoint or API key is embedded in this repository. The installer
+creates a single `ninfer-rtx6000` provider with text and image input and a 262K
+context window. Running it again replaces the previous provider configuration
+after creating a timestamped local backup.
 
 Reviewing a remote script before executing it is always sensible:
 
@@ -52,7 +52,7 @@ bash install.sh
 
 ## Update
 
-Updates reuse the selected provider's endpoint and API key from the local
+Updates reuse the RTX PRO 6000 provider's endpoint and API key from the local
 `models.json`; neither value is uploaded to GitHub or printed.
 
 ```bash

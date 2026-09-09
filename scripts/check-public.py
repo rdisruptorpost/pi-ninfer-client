@@ -44,7 +44,10 @@ def candidate_paths() -> list[Path]:
         )
     except (OSError, subprocess.CalledProcessError):
         return [p for p in ROOT.rglob("*") if p.is_file() and not p.is_symlink()]
-    return [ROOT / line for line in result.stdout.splitlines() if line]
+    paths = [ROOT / line for line in result.stdout.splitlines() if line]
+    # `git ls-files` includes tracked paths deleted in the working tree. They
+    # are absent from the release, so do not misreport them as unreadable data.
+    return [path for path in paths if path.exists() or path.is_symlink()]
 
 
 def entropy(value: str) -> float:

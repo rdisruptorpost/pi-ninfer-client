@@ -1,14 +1,26 @@
 {
   "providers": {
-    "ninfer": {
+    "ninfer-rtx6000": {
       "baseUrl": "__BASE_URL__",
       "api": "openai-completions",
       "apiKey": "__API_KEY__",
+      "authHeader": true,
+      "compat": {
+        "supportsStore": false,
+        "supportsDeveloperRole": true,
+        "supportsReasoningEffort": true,
+        "supportsUsageInStreaming": true,
+        "supportsFinishReason": true,
+        "maxTokensField": "max_tokens",
+        "requiresThinkingAsText": false,
+        "supportsStrictMode": false,
+        "sendSessionAffinityHeaders": false
+      },
       "models": [
         {
           "id": "qwen3.8-27b",
-          "name": "Qwen3.8-27B NVFP4",
-          "contextWindow": 180224,
+          "name": "Qwen3.8-27B NVFP4 (RTX PRO 6000)",
+          "contextWindow": 262144,
           "maxTokens": 16384,
           "reasoning": true,
           "thinkingLevelMap": {

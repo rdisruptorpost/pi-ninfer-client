@@ -7,7 +7,7 @@ files outside the repository. Before opening a pull request, run:
 python3 scripts/check-public.py
 python3 tests/install_test.py
 node tests/command_judge_test.mjs
-bash -n install.sh update.sh add-rtx6000.sh installRTX6000.sh make-bundle.sh serve.sh
+bash -n install.sh update.sh make-bundle.sh serve.sh
 ```
 
 Changes to an extension should include a regression test when the behavior can
