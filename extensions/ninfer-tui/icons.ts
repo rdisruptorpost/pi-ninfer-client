@@ -42,7 +42,7 @@ const NERD_GLYPHS: IconGlyphs = {
 	input: "",
 	output: "",
 	cacheHit: "",
-	cost: "",
+	throughput: "\u{F04C5}", // md-speedometer (U+F155 = fa-usd renders as "$".)
 	speed: "󰓅",
 	latency: "",
 	stall: "",
@@ -102,12 +102,22 @@ const NERD_FONT_TERMINALS = new Set([
 	"vscode",
 ]);
 
+// Terminal identifiers are not consistently cased. Ghostty, for example,
+// commonly sets TERM_PROGRAM=ghostty while older environments used Ghostty.
+function isNerdFontTerminal(value: string): boolean {
+	const lower = value.toLowerCase();
+	for (const terminal of NERD_FONT_TERMINALS) {
+		if (terminal.toLowerCase() === lower) return true;
+	}
+	return false;
+}
+
 export function detectNerdFont(): boolean {
 	const termProgram = process.env.TERM_PROGRAM;
-	if (termProgram && NERD_FONT_TERMINALS.has(termProgram)) return true;
+	if (termProgram && isNerdFontTerminal(termProgram)) return true;
 
 	const lcTerminal = process.env.LC_TERMINAL;
-	if (lcTerminal && NERD_FONT_TERMINALS.has(lcTerminal)) return true;
+	if (lcTerminal && isNerdFontTerminal(lcTerminal)) return true;
 
 	if (process.env.TERM === "xterm-kitty") return true;
 

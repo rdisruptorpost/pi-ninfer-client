@@ -105,6 +105,31 @@ symlinkSync(
   "dir",
 );
 await jiti.import(join(tuiWork, "index.ts"));
+const iconsModule = await jiti.import(join(tuiWork, "icons.ts"));
+assert.equal(iconsModule.resolveGlyphs("nerd").throughput, "\u{F04C5}");
+
+const terminalEnvironment = {
+  TERM_PROGRAM: process.env.TERM_PROGRAM,
+  LC_TERMINAL: process.env.LC_TERMINAL,
+  TERM: process.env.TERM,
+  WT_SESSION: process.env.WT_SESSION,
+};
+try {
+  delete process.env.LC_TERMINAL;
+  delete process.env.WT_SESSION;
+  process.env.TERM = "xterm-256color";
+  process.env.TERM_PROGRAM = "ghostty";
+  assert.equal(iconsModule.detectNerdFont(), true);
+
+  delete process.env.TERM_PROGRAM;
+  process.env.LC_TERMINAL = "GHOSTTY";
+  assert.equal(iconsModule.detectNerdFont(), true);
+} finally {
+  for (const [name, value] of Object.entries(terminalEnvironment)) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+}
 
 const activityWork = join(work, "activity");
 cpSync(join(root, "extensions/activity"), activityWork, { recursive: true });
