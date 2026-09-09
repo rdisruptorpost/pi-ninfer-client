@@ -1,0 +1,313 @@
+<#
+  Configure pi to use an NInfer server. Windows.
+  Public install:
+    irm https://raw.githubusercontent.com/rdisruptorpost/pi-ninfer-client/main/install.ps1 | iex
+#>
+param(
+  [string]$Url = "",
+  [string]$ServerHost = "",
+  [string]$ServerPort = "",
+  [ValidateSet("http", "https")][string]$Scheme = "http",
+  [ValidateSet("default", "rtx6000")][string]$Profile = "rtx6000",
+  [string]$Key = ""
+)
+$ErrorActionPreference = "Stop"
+
+$Repository = if ($env:PI_INSTALL_REPOSITORY) { $env:PI_INSTALL_REPOSITORY } else { "rdisruptorpost/pi-ninfer-client" }
+$RepositoryRef = if ($env:PI_INSTALL_REF) { $env:PI_INSTALL_REF } else { "main" }
+$Here = if ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { "" }
+if (-not $Here -or -not (Test-Path "$Here\templates\models.json")) {
+  $BootstrapWork = Join-Path $env:TEMP ("pi-install-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+  New-Item -ItemType Directory -Force -Path $BootstrapWork | Out-Null
+  try {
+    Write-Host "==> fetching $Repository@$RepositoryRef from GitHub"
+    $Archive = Join-Path $BootstrapWork "source.zip"
+    Invoke-WebRequest -Uri "https://github.com/$Repository/archive/refs/heads/$RepositoryRef.zip" -OutFile $Archive -UseBasicParsing
+    Expand-Archive -Path $Archive -DestinationPath $BootstrapWork -Force
+    $BundledInstaller = Get-ChildItem $BootstrapWork -Recurse -Filter install.ps1 |
+      Where-Object { Test-Path (Join-Path $_.DirectoryName "templates\models.json") } |
+      Select-Object -First 1
+    if (-not $BundledInstaller) { throw "install.ps1 not found in the GitHub archive" }
+    & $BundledInstaller.FullName -Url $Url -ServerHost $ServerHost -ServerPort $ServerPort `
+      -Scheme $Scheme -Profile $Profile -Key $Key
+  } finally {
+    Remove-Item $BootstrapWork -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  return
+}
+
+# Windows PowerShell 5.1's Set-Content -Encoding UTF8 writes a BOM (EF BB BF),
+# which every JSON parser rejects. -Encoding utf8NoBOM only exists in PS7, so
+# write through .NET instead: correct on both 5.1 and 7.
+
+# Remove a path that may be a junction/symlink. A plain Remove-Item -Recurse on a
+# junction can FOLLOW it and delete the target's contents -- here that would wipe
+# pi's own node_modules. Delete the reparse point itself instead.
+function Remove-LinkOrDir {
+  param([string]$Path)
+  if (-not (Test-Path $Path)) { return }
+  $item = Get-Item $Path -Force
+  if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+    [System.IO.Directory]::Delete($Path, $false)   # never follows the link
+  } elseif ($item.PSIsContainer) {
+    Remove-Item $Path -Recurse -Force
+  } else {
+    Remove-Item $Path -Force
+  }
+}
+
+function Write-Utf8NoBom {
+  param([string]$Path, [string]$Content)
+  $enc = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, $Content, $enc)
+}
+
+function Assert-ValidJson {
+  param([string]$Path)
+  $bytes = [System.IO.File]::ReadAllBytes($Path)
+  if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+    throw "$Path was written with a UTF-8 BOM - JSON parsers will reject it."
+  }
+  try { Get-Content $Path -Raw | ConvertFrom-Json | Out-Null }
+  catch { throw "$Path is not valid JSON: $_" }
+}
+
+if (-not $Url -and $env:PI_NINFER_URL) { $Url = $env:PI_NINFER_URL }
+if (-not $ServerHost -and $env:PI_NINFER_HOST) { $ServerHost = $env:PI_NINFER_HOST }
+if (-not $ServerPort -and $env:PI_NINFER_PORT) { $ServerPort = $env:PI_NINFER_PORT }
+if ($env:PI_NINFER_SCHEME) { $Scheme = $env:PI_NINFER_SCHEME }
+if ($env:PI_NINFER_PROFILE) { $Profile = $env:PI_NINFER_PROFILE }
+if ($Scheme -notin @("http", "https")) { throw "PI_NINFER_SCHEME must be http or https" }
+if ($Profile -notin @("default", "rtx6000")) { throw "PI_NINFER_PROFILE must be default or rtx6000" }
+if (-not $Url) {
+  if (-not $ServerHost) { $ServerHost = Read-Host "NInfer server IP or hostname" }
+  if (-not $ServerPort) { $ServerPort = Read-Host "NInfer server port" }
+  if ($ServerHost -match '[/@\s]') { throw "invalid server host" }
+  $portNumber = 0
+  if (-not [int]::TryParse($ServerPort, [ref]$portNumber) -or $portNumber -lt 1 -or $portNumber -gt 65535) {
+    throw "server port must be an integer from 1 through 65535"
+  }
+  $endpointHost = if ($ServerHost.Contains(':') -and -not $ServerHost.StartsWith('[')) { "[$ServerHost]" } else { $ServerHost }
+  $Url = "${Scheme}://${endpointHost}:${ServerPort}"
+}
+if (-not $Key -and $env:PI_NINFER_API_KEY) { $Key = $env:PI_NINFER_API_KEY }
+if (-not $Key) {
+  $secureKey = Read-Host "NInfer API key" -AsSecureString
+  $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
+  try { $Key = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
+  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+}
+$Url = $Url.TrimEnd('/')
+$parsedUrl = $null
+if (-not [uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$parsedUrl) -or
+    $parsedUrl.Scheme -notin @("http", "https") -or $parsedUrl.PathAndQuery -ne "/") {
+  throw "server URL must be an http(s) origin with no path"
+}
+if ($Profile -eq "rtx6000") { $ProviderId = "ninfer-rtx6000" } else { $ProviderId = "ninfer" }
+
+if (-not (Get-Command pi -ErrorAction SilentlyContinue)) { throw "pi not found on PATH. Install pi first." }
+if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
+  Write-Warning "No bash found. pi REQUIRES a bash shell on Windows - install Git for Windows, or the bash tool will not work."
+}
+
+$AgentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { "$env:USERPROFILE\.pi\agent" }
+$Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+function Backup($p) { if (Test-Path $p) { Copy-Item $p "$p.bak-$Stamp" -Recurse -Force; Write-Host "  backed up $(Split-Path $p -Leaf)" } }
+
+Write-Host "==> checking the server is reachable"
+try { Invoke-RestMethod -Uri "$Url/health" -TimeoutSec 10 | Out-Null }
+catch { throw "cannot reach $Url/health - check the address and any firewall on the server" }
+try { Invoke-RestMethod -Uri "$Url/v1/models" -Headers @{ Authorization = "Bearer $Key" } -TimeoutSec 10 | Out-Null }
+catch { throw "server reachable but the API key was rejected" }
+Write-Host "    ok"
+
+Write-Host "==> installing pi packages"
+pi install npm:pi-web-access | Out-Null
+# Pin the cross-extension API that the bundled command judge is tested against.
+pi install npm:@gotgenes/pi-permission-system@31.1.3 | Out-Null
+pi install npm:@gotgenes/pi-subagents | Out-Null
+Write-Host "    web access, permission system, subagents"
+
+Write-Host "==> writing config to $AgentDir"
+New-Item -ItemType Directory -Force -Path "$AgentDir\agents", "$AgentDir\extensions\pi-permission-system" | Out-Null
+Backup "$AgentDir\models.json"
+$FreshModels = (Get-Content "$Here\templates\models.json" -Raw).Replace('__BASE_URL__', "$Url/v1").Replace('__API_KEY__', $Key) | ConvertFrom-Json
+$FreshProvider = $FreshModels.providers.ninfer
+if ($Profile -eq "rtx6000") {
+  $FreshProvider | Add-Member -NotePropertyName authHeader -NotePropertyValue $true -Force
+  $FreshProvider | Add-Member -NotePropertyName compat -NotePropertyValue ([pscustomobject][ordered]@{
+    supportsStore = $false
+    supportsDeveloperRole = $true
+    supportsReasoningEffort = $true
+    supportsUsageInStreaming = $true
+    supportsFinishReason = $true
+    maxTokensField = "max_tokens"
+    requiresThinkingAsText = $false
+    supportsStrictMode = $false
+    sendSessionAffinityHeaders = $false
+  }) -Force
+  $FreshProvider.models[0].name = "Qwen3.8-27B NVFP4 (RTX PRO 6000)"
+  $FreshProvider.models[0].contextWindow = 262144
+}
+$ModelsPath = "$AgentDir\models.json"
+if (Test-Path $ModelsPath) {
+  try { $ModelsConfig = Get-Content $ModelsPath -Raw | ConvertFrom-Json }
+  catch {
+    Write-Warning "existing models.json is invalid; replacing it with the bundle template"
+    $ModelsConfig = $FreshModels
+  }
+} else {
+  $ModelsConfig = $FreshModels
+}
+if (-not ($ModelsConfig.PSObject.Properties.Name -contains "providers") -or $null -eq $ModelsConfig.providers) {
+  $ModelsConfig | Add-Member -NotePropertyName providers -NotePropertyValue ([pscustomobject]@{}) -Force
+}
+# Refresh only the selected endpoint and preserve every other provider.
+$ModelsConfig.providers | Add-Member -NotePropertyName $ProviderId -NotePropertyValue $FreshProvider -Force
+Write-Utf8NoBom $ModelsPath (($ModelsConfig | ConvertTo-Json -Depth 20) + "`n")
+Assert-ValidJson "$AgentDir\models.json"
+Backup "$AgentDir\extensions\pi-permission-system\config.json"
+Copy-Item "$Here\templates\permission-config.json" "$AgentDir\extensions\pi-permission-system\config.json" -Force
+Backup "$AgentDir\subagents.json"
+Copy-Item "$Here\templates\subagents.json" "$AgentDir\subagents.json" -Force
+Assert-ValidJson "$AgentDir\extensions\pi-permission-system\config.json"
+Assert-ValidJson "$AgentDir\subagents.json"
+Copy-Item "$Here\agents\*.md" "$AgentDir\agents\" -Force
+
+# settings.json belongs to the user, so merge rather than overwrite. The 32k
+# reserve is intentionally larger than the 16k generation budget: tool-heavy
+# turns can jump past the threshold, and warm compaction needs its own headroom.
+$SettingsPath = "$AgentDir\settings.json"
+$Settings = if (Test-Path $SettingsPath) {
+  try { Get-Content $SettingsPath -Raw | ConvertFrom-Json } catch { [pscustomobject]@{} }
+} else { [pscustomobject]@{} }
+if (-not $Settings.PSObject.Properties.Name.Contains("compaction")) {
+  $Settings | Add-Member -NotePropertyName compaction -NotePropertyValue ([pscustomobject]@{}) -Force
+}
+$Settings.compaction | Add-Member -NotePropertyName reserveTokens -NotePropertyValue 32768 -Force
+Write-Utf8NoBom $SettingsPath ($Settings | ConvertTo-Json -Depth 10)
+Assert-ValidJson $SettingsPath
+Write-Host "    settings.json: compaction.reserveTokens = 32768"
+Write-Host "    models.json, permission policy, subagents.json, agent types"
+
+Write-Host "==> installing the command judge"
+$Ext = "$AgentDir\extensions\command-judge"
+# Replace any previous install. Existing junctions must be cleared first --
+# New-Item -ItemType Junction -Force will NOT overwrite a non-empty directory.
+foreach ($old in @(
+    "$Ext\node_modules\@earendil-works\pi-coding-agent",
+    "$Ext\node_modules\@earendil-works\pi-ai",
+    "$Ext\node_modules\@gotgenes\pi-permission-system")) {
+  Remove-LinkOrDir $old
+}
+New-Item -ItemType Directory -Force -Path "$Ext\node_modules\@earendil-works", "$Ext\node_modules\@gotgenes" | Out-Null
+Copy-Item "$Here\extensions\command-judge\index.ts" "$Ext\index.ts" -Force
+Write-Utf8NoBom "$Ext\package.json" '{ "name": "command-judge", "private": true, "type": "module" }'
+$Root = (npm root -g).Trim()
+$Ca   = Join-Path $Root "@earendil-works\pi-coding-agent"
+if (-not (Test-Path $Ca)) { throw "cannot locate @earendil-works/pi-coding-agent under $Root" }
+# Junctions, not symlinks - these need no administrator rights.
+New-Item -ItemType Junction -Force -Path "$Ext\node_modules\@earendil-works\pi-coding-agent" -Target $Ca | Out-Null
+New-Item -ItemType Junction -Force -Path "$Ext\node_modules\@earendil-works\pi-ai" -Target "$Ca\node_modules\@earendil-works\pi-ai" | Out-Null
+New-Item -ItemType Junction -Force -Path "$Ext\node_modules\@gotgenes\pi-permission-system" -Target "$AgentDir\npm\node_modules\@gotgenes\pi-permission-system" | Out-Null
+$missing = @("@earendil-works\pi-ai","@earendil-works\pi-coding-agent","@gotgenes\pi-permission-system") |
+  Where-Object { -not (Test-Path "$Ext\node_modules\$_\package.json") }
+if ($missing) { Write-Warning "judge deps unresolved: $($missing -join ', '). It will be skipped fail-safe (more prompts, never fewer)." }
+else { Write-Host "    linked 3 dependencies" }
+
+Write-Host "==> installing the activity extension"
+$Act = "$AgentDir\extensions\activity"
+Remove-LinkOrDir "$Act\node_modules\@earendil-works\pi-coding-agent"
+New-Item -ItemType Directory -Force -Path "$Act\node_modules\@earendil-works" | Out-Null
+Copy-Item "$Here\extensions\activity\index.ts" "$Act\index.ts" -Force
+Copy-Item "$Here\extensions\activity\anim.ts" "$Act\anim.ts" -Force
+Copy-Item "$Here\extensions\activity\LICENSE.animations" "$Act\LICENSE.animations" -Force -ErrorAction SilentlyContinue
+Write-Utf8NoBom "$Act\package.json" '{ "name": "activity", "private": true, "type": "module" }'
+New-Item -ItemType Junction -Force -Path "$Act\node_modules\@earendil-works\pi-coding-agent" -Target $Ca | Out-Null
+if (Test-Path "$Act\node_modules\@earendil-works\pi-coding-agent\package.json") {
+  Write-Host "    activity (verbose progress + tok/s)"
+} else { Write-Warning "activity dep unresolved; it will not load" }
+
+Write-Host "==> installing ninfer-tui"
+$Tui = "$AgentDir\extensions\ninfer-tui"
+Remove-LinkOrDir "$Tui\node_modules\@earendil-works\pi-coding-agent"
+New-Item -ItemType Directory -Force -Path "$Tui\node_modules\@earendil-works" | Out-Null
+Copy-Item "$Here\extensions\ninfer-tui\*" $Tui -Force -Exclude "node_modules"
+Write-Utf8NoBom "$Tui\package.json" '{ "name": "ninfer-tui", "private": true, "type": "module" }'
+New-Item -ItemType Junction -Force -Path "$Tui\node_modules\@earendil-works\pi-coding-agent" -Target $Ca | Out-Null
+if (Test-Path "$Tui\node_modules\@earendil-works\pi-coding-agent\package.json") {
+  Write-Host "    ninfer-tui (themed header/footer, tok/s instead of cost)"
+} else { Write-Warning "ninfer-tui dep unresolved; it will not load" }
+
+Write-Host "==> installing the effort command"
+$Eff = "$AgentDir\extensions\effort"
+Remove-LinkOrDir "$Eff\node_modules\@earendil-works\pi-coding-agent"
+New-Item -ItemType Directory -Force -Path "$Eff\node_modules\@earendil-works" | Out-Null
+Copy-Item "$Here\extensions\effort\index.ts" "$Eff\index.ts" -Force
+Write-Utf8NoBom "$Eff\package.json" '{ "name": "effort", "private": true, "type": "module" }'
+New-Item -ItemType Junction -Force -Path "$Eff\node_modules\@earendil-works\pi-coding-agent" -Target $Ca | Out-Null
+if (Test-Path "$Eff\node_modules\@earendil-works\pi-coding-agent\package.json") {
+  Write-Host "    effort (/effort, /thinking commands)"
+} else { Write-Warning "effort dep unresolved; it will not load" }
+
+Write-Host "==> installing the digest summary"
+# digest renders its own transcript entry, so it needs pi-tui as well.
+$Dig = "$AgentDir\extensions\digest"
+Remove-LinkOrDir "$Dig\node_modules\@earendil-works\pi-coding-agent"
+Remove-LinkOrDir "$Dig\node_modules\@earendil-works\pi-tui"
+New-Item -ItemType Directory -Force -Path "$Dig\node_modules\@earendil-works" | Out-Null
+Copy-Item "$Here\extensions\digest\index.ts" "$Dig\index.ts" -Force
+Write-Utf8NoBom "$Dig\package.json" '{ "name": "digest", "private": true, "type": "module" }'
+New-Item -ItemType Junction -Force -Path "$Dig\node_modules\@earendil-works\pi-coding-agent" -Target $Ca | Out-Null
+New-Item -ItemType Junction -Force -Path "$Dig\node_modules\@earendil-works\pi-tui" -Target "$Ca\node_modules\@earendil-works\pi-tui" | Out-Null
+if ((Test-Path "$Dig\node_modules\@earendil-works\pi-coding-agent\package.json") -and
+    (Test-Path "$Dig\node_modules\@earendil-works\pi-tui\package.json")) {
+  Write-Host "    digest (/digest - short summary under each long answer)"
+} else { Write-Warning "digest deps unresolved; it will not load" }
+
+Write-Host "==> installing fast-compact"
+$Fc = "$AgentDir\extensions\fast-compact"
+Remove-LinkOrDir "$Fc\node_modules\@earendil-works\pi-coding-agent"
+New-Item -ItemType Directory -Force -Path "$Fc\node_modules\@earendil-works" | Out-Null
+Copy-Item "$Here\extensions\fast-compact\index.ts" "$Fc\index.ts" -Force
+Write-Utf8NoBom "$Fc\package.json" '{ "name": "fast-compact", "private": true, "type": "module" }'
+New-Item -ItemType Junction -Force -Path "$Fc\node_modules\@earendil-works\pi-coding-agent" -Target $Ca | Out-Null
+if (Test-Path "$Fc\node_modules\@earendil-works\pi-coding-agent\package.json") {
+  Write-Host "    fast-compact (/fastcompact - warm-prefix compaction)"
+} else { Write-Warning "fast-compact dep unresolved; pi's own compaction still applies" }
+
+Write-Host "==> installing image-window"
+$Iw = "$AgentDir\extensions\image-window"
+Remove-LinkOrDir "$Iw\node_modules\@earendil-works\pi-coding-agent"
+New-Item -ItemType Directory -Force -Path "$Iw\node_modules\@earendil-works" | Out-Null
+Copy-Item "$Here\extensions\image-window\index.ts" "$Iw\index.ts" -Force
+Write-Utf8NoBom "$Iw\package.json" '{ "name": "image-window", "private": true, "type": "module" }'
+New-Item -ItemType Junction -Force -Path "$Iw\node_modules\@earendil-works\pi-coding-agent" -Target $Ca | Out-Null
+if (Test-Path "$Iw\node_modules\@earendil-works\pi-coding-agent\package.json") {
+  Write-Host "    image-window (/images - keeps long image sessions under the media limit)"
+} else { Write-Warning "image-window dep unresolved; it will not load" }
+
+Write-Host "==> installing auto-continue"
+$Ac = "$AgentDir\extensions\auto-continue"
+Remove-LinkOrDir "$Ac\node_modules\@earendil-works\pi-coding-agent"
+New-Item -ItemType Directory -Force -Path "$Ac\node_modules\@earendil-works" | Out-Null
+Copy-Item "$Here\extensions\auto-continue\index.ts" "$Ac\index.ts" -Force
+Write-Utf8NoBom "$Ac\package.json" '{ "name": "auto-continue", "private": true, "type": "module" }'
+New-Item -ItemType Junction -Force -Path "$Ac\node_modules\@earendil-works\pi-coding-agent" -Target $Ca | Out-Null
+if (Test-Path "$Ac\node_modules\@earendil-works\pi-coding-agent\package.json") {
+  Write-Host "    auto-continue (/continue - resumes replies cut off at the output limit)"
+} else { Write-Warning "auto-continue dep unresolved; it will not load" }
+
+Write-Host "==> checking for conflicting extensions"
+$others = @(Get-ChildItem "$AgentDir\extensions" -Filter *.ts -File -ErrorAction SilentlyContinue)
+if ($others) {
+  Write-Warning ("Loose extension(s) found alongside command-judge: " +
+    ($others.Name -join ', ') + ". If pi reports a tool-name conflict on start, " +
+    "move the offending file out of $AgentDir\extensions and re-run pi.")
+} else { Write-Host "    none" }
+
+Write-Host "==> smoke test"
+$out = pi -p --no-session --provider $ProviderId --model qwen3.8-27b:low "Reply with exactly: READY" 2>&1 | Select-Object -Last 1
+Write-Host "    $out"
+if ($out -match "READY") { Write-Host "`nDone. Start with:  pi --provider $ProviderId --model qwen3.8-27b:low" }
+else { throw "Smoke test did not return READY - see the output above." }

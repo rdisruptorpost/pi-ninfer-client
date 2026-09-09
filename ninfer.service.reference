@@ -1,0 +1,32 @@
+[Unit]
+Description=NInfer server — Qwen3.8-27B NVFP4 on RTX 5090
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/ninfer
+# Key comes from a 600-perm env file so it is not readable in the unit or in
+# `systemctl cat`. systemd expands ${VAR} in ExecStart from the service env.
+EnvironmentFile=%h/.config/ninfer/ninfer.env
+ExecStart=%h/ninfer/build/apps/ninfer-serve \
+  %h/models/qwen3_8_27b_nvfp4.ninfer \
+  --host ${NINFER_HOST} --port ${NINFER_PORT} \
+  --api-key ${NINFER_API_KEY} \
+  --max-context 180224 --kv-capacity auto --kv-dtype int8 \
+  --max-concurrency 4 --prefill-chunk 1024 \
+  --pending-timeout-ms 180000 --max-pending-requests 16 \
+  --spec mtp --draft-tokens 5 --lm-head-draft \
+  --vision \
+  --default-max-tokens 16384 \
+  --temperature 0.6 --top-p 0.95 --top-k 20 \
+  --request-log-jsonl %h/.local/state/ninfer/server.requests.jsonl
+Restart=on-failure
+RestartSec=10
+# Model load is ~4s warm, longer from cold disk; do not let systemd give up early.
+TimeoutStartSec=300
+TimeoutStopSec=60
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=default.target

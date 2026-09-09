@@ -1,0 +1,53 @@
+{
+  "permission": {
+    "*": "allow",
+    "read": "allow",
+    "write": "ask",
+    "edit": "ask",
+    "path": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.env.example": "allow",
+      "~/.ssh/*": "deny",
+      "~/.aws/*": "deny",
+      "~/.gnupg/*": "deny",
+      "~/.config/gh/*": "deny",
+      "~/.docker/config.json": "deny",
+      "~/.netrc": "deny",
+      "~/.pi/agent/auth.json": "deny",
+      "~/.claude.json": "deny",
+      "~/.claude/*": "deny",
+      "~/.codex/*": "deny",
+      "~/.hound/*": "deny",
+      "~/.pi/web-search.json": "deny",
+      "*id_rsa*": "deny",
+      "*id_ed25519*": "deny",
+      "*credentials*": "deny",
+      "*.pem": "deny",
+      "*.key": "deny"
+    },
+    "bash": {
+      "*": "ask",
+      "rm -rf *": "deny",
+      "rm -fr *": "deny",
+      "sudo *": "deny",
+      "doas *": "deny",
+      "su *": "deny",
+      "chmod 777*": "deny",
+      "chown *": "deny",
+      "dd *": "deny",
+      "mkfs*": "deny",
+      "shutdown*": "deny",
+      "reboot*": "deny",
+      "halt*": "deny",
+      "history*": "deny",
+      "crontab*": "deny",
+      "systemctl*": "deny"
+    },
+    "external_directory": "allow"
+  },
+  "authorizerChain": [
+    "command-judge"
+  ]
+}

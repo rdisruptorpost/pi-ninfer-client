@@ -1,0 +1,26 @@
+# Generated distribution artifacts
+pi-ninfer-client.zip
+
+# Local Pi configuration and secrets
+models.json
+!templates/models.json
+command-judge.json
+auth.json
+.env
+.env.*
+*.key
+*.pem
+
+# Logs, transcripts and benchmark output
+*.jsonl
+*.log
+results/
+
+# Dependencies and caches
+node_modules/
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Installer backups
+*.bak-*
