@@ -7,6 +7,7 @@ files outside the repository. Before opening a pull request, run:
 python3 scripts/check-public.py
 python3 tests/install_test.py
 node tests/command_judge_test.mjs
+node tests/client_build_test.mjs
 bash -n install.sh update.sh make-bundle.sh serve.sh
 ```
 

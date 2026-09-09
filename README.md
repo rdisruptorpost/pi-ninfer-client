@@ -42,6 +42,13 @@ creates a single `ninfer-rtx6000` provider with text and image input and a 262K
 context window. Running it again replaces the previous provider configuration
 after creating a timestamped local backup.
 
+The bootstrap resolves `main` to an exact Git commit before downloading the
+archive. Pi's startup header shows that installed revision as `client abc1234`
+and checks it against the current branch head. Results are cached for 15 minutes
+across sessions; if GitHub is unavailable, the header reports that the status is
+unavailable without delaying startup. Pi's own `v0.0.1`-style version remains a
+separate value.
+
 Reviewing a remote script before executing it is always sensible:
 
 ```bash
@@ -72,7 +79,7 @@ Restart Pi after an install or update so every extension is reloaded.
 | model provider | Qwen3.8-27B text and image input with explicit thinking levels |
 | permission policy | broad read access, guarded writes, and hard-denied credential paths |
 | command judge | model-reviewed shell commands with `safe` and `auto` postures |
-| NInfer TUI | model, effort, cache/performance, and judge status in the terminal UI |
+| NInfer TUI | client revision, model, effort, cache/performance, and judge status in the terminal UI |
 | activity | per-turn prompt, generation, tool, and throughput telemetry |
 | fast compact | cache-friendly compaction with a bounded cold fallback |
 | image window | drops old request images before the media budget is exhausted |
@@ -112,6 +119,7 @@ Before committing:
 ```bash
 python3 scripts/check-public.py
 python3 tests/install_test.py
+node tests/client_build_test.mjs
 node tests/command_judge_test.mjs
 ./make-bundle.sh
 ```
@@ -127,9 +135,10 @@ download the source directly from GitHub.
 ## Local files and secrets
 
 The generated Pi `models.json` contains the API key because Pi needs it to call
-the server. The Linux installer restricts that file to the current user. Never
-commit `models.json`, activity logs, permission-review logs, session JSONL,
-environment files, or installer backups.
+the server. The Linux installer restricts that file to the current user.
+`client-build.json` and `client-build-cache.json` contain only public repository
+revision metadata. Never commit `models.json`, activity logs, permission-review
+logs, session JSONL, environment files, or installer backups.
 
 On Windows, keep hand-written JSON encoded as UTF-8 without a byte-order mark.
 The installer handles this automatically.

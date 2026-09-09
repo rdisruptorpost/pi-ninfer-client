@@ -1,5 +1,6 @@
 import { VERSION, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
+import { formatClientBuild, type ClientBuild } from "./client-build.ts";
 import {
 	center,
 	collectPiCommandNames,
@@ -163,12 +164,16 @@ function twoColumn(
 export class OpenTuiHeader implements Component {
 	private readonly pi: ExtensionAPI;
 	private readonly ctx: ExtensionContext;
+	private readonly tui: TUI;
 	private readonly frame = LOGO_FRAMES.length - 1;
 	private readonly tipCommands: string[];
+	private clientBuild: ClientBuild | undefined;
 
-	constructor(pi: ExtensionAPI, ctx: ExtensionContext, _tui: TUI) {
+	constructor(pi: ExtensionAPI, ctx: ExtensionContext, tui: TUI, clientBuild?: ClientBuild) {
 		this.pi = pi;
 		this.ctx = ctx;
+		this.tui = tui;
+		this.clientBuild = clientBuild;
 		const pool = collectPiCommandNames(pi.getCommands());
 		this.tipCommands = pickSlashCommandTips(pool, {
 			fixed: ["open-tui"],
@@ -194,6 +199,7 @@ export class OpenTuiHeader implements Component {
 		const leftLines = [
 			...renderLogo(this.frame, paint).map((line) => center(line, leftWidth)),
 			center(bold("Let's build something great"), leftWidth),
+			...(this.clientBuild ? [center(dim(formatClientBuild(this.clientBuild)), leftWidth)] : []),
 			center(muted(`${model} · ${effort}`), leftWidth),
 			center(dim(cwd), leftWidth),
 		];
@@ -226,19 +232,35 @@ export class OpenTuiHeader implements Component {
 
 	invalidate(): void {}
 
+	setClientBuild(clientBuild: ClientBuild): void {
+		this.clientBuild = clientBuild;
+		this.tui.requestRender();
+	}
+
 	dispose(): void {}
 }
 
-export function installHeader(pi: ExtensionAPI, ctx: ExtensionContext): () => void {
+export interface HeaderController {
+	setClientBuild(clientBuild: ClientBuild): void;
+	dispose(): void;
+}
+
+export function installHeader(pi: ExtensionAPI, ctx: ExtensionContext, clientBuild?: ClientBuild): HeaderController {
 	let header: OpenTuiHeader | undefined;
 	ctx.ui.setHeader((tui) => {
 		header?.dispose();
-		header = new OpenTuiHeader(pi, ctx, tui);
+		header = new OpenTuiHeader(pi, ctx, tui, clientBuild);
 		return header;
 	});
-	return () => {
-		header?.dispose();
-		header = undefined;
-		ctx.ui.setHeader(undefined);
+	return {
+		setClientBuild(build) {
+			clientBuild = build;
+			header?.setClientBuild(build);
+		},
+		dispose() {
+			header?.dispose();
+			header = undefined;
+			ctx.ui.setHeader(undefined);
+		},
 	};
 }

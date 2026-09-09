@@ -17,7 +17,10 @@ DENIED_SUFFIXES = {
     ".jsonl", ".log", ".ninfer", ".gguf", ".pem", ".key",
     ".zip", ".png", ".jpg", ".jpeg", ".gif", ".ico",
 }
-DENIED_NAMES = {".env", "auth.json", "command-judge.json", "settings.json"}
+DENIED_NAMES = {
+    ".env", "auth.json", "client-build-cache.json", "client-build.json",
+    "command-judge.json", "settings.json",
+}
 ALLOWED_SPECIAL = {Path("templates/models.json")}
 
 PATTERNS = {

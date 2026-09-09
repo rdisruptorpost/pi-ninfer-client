@@ -6,6 +6,7 @@ set -euo pipefail
 
 REPOSITORY="${PI_INSTALL_REPOSITORY:-rdisruptorpost/pi-ninfer-client}"
 REPOSITORY_REF="${PI_INSTALL_REF:-main}"
+SOURCE_COMMIT="${PI_INSTALL_COMMIT:-}"
 SOURCE_PATH="${BASH_SOURCE[0]:-}"
 SOURCE_DIR="$(cd "$(dirname "${SOURCE_PATH:-.}")" 2>/dev/null && pwd || pwd)"
 
@@ -18,9 +19,24 @@ if [ ! -f "$SOURCE_PATH" ] || [ ! -f "$SOURCE_DIR/templates/models.json" ]; then
   BOOTSTRAP_WORK="$(mktemp -d)"
   trap 'rm -rf "$BOOTSTRAP_WORK"' EXIT
   ARCHIVE="$BOOTSTRAP_WORK/source.zip"
-  echo "==> fetching $REPOSITORY@$REPOSITORY_REF from GitHub"
+  if [ -z "$SOURCE_COMMIT" ]; then
+    COMMIT_INFO="$BOOTSTRAP_WORK/commit.json"
+    curl -fsSL --proto '=https' --tlsv1.2 \
+      -H 'Accept: application/vnd.github+json' \
+      -H 'User-Agent: pi-ninfer-client-installer' \
+      "https://api.github.com/repos/$REPOSITORY/commits/$REPOSITORY_REF" \
+      -o "$COMMIT_INFO"
+    SOURCE_COMMIT="$(python3 - "$COMMIT_INFO" <<'COMMIT_PY'
+import json, pathlib, sys
+print(json.loads(pathlib.Path(sys.argv[1]).read_text())["sha"])
+COMMIT_PY
+)"
+  fi
+  [[ "$SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] \
+    || { echo "could not resolve an exact Git commit for $REPOSITORY@$REPOSITORY_REF" >&2; exit 1; }
+  echo "==> fetching $REPOSITORY@${SOURCE_COMMIT:0:7} from GitHub"
   curl -fsSL --proto '=https' --tlsv1.2 \
-    "https://github.com/$REPOSITORY/archive/refs/heads/$REPOSITORY_REF.zip" \
+    "https://github.com/$REPOSITORY/archive/$SOURCE_COMMIT.zip" \
     -o "$ARCHIVE"
   python3 - "$ARCHIVE" "$BOOTSTRAP_WORK" <<'BOOTSTRAP_PY'
 import pathlib
@@ -38,11 +54,15 @@ with zipfile.ZipFile(archive) as bundle:
 BOOTSTRAP_PY
   BUNDLED_INSTALLER="$(find "$BOOTSTRAP_WORK" -mindepth 2 -maxdepth 2 -name install.sh -type f -print -quit)"
   [ -n "$BUNDLED_INSTALLER" ] || { echo "install.sh not found in the GitHub archive" >&2; exit 1; }
-  bash "$BUNDLED_INSTALLER" "$@" </dev/null
+  PI_INSTALL_COMMIT="$SOURCE_COMMIT" bash "$BUNDLED_INSTALLER" "$@" </dev/null
   exit $?
 fi
 
 HERE="$SOURCE_DIR"
+if ! [[ "$SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] && command -v git >/dev/null 2>&1; then
+  SOURCE_COMMIT="$(git -C "$HERE" rev-parse HEAD 2>/dev/null || true)"
+fi
+[[ "$SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] || SOURCE_COMMIT="unknown"
 BASE_URL="${PI_NINFER_URL:-}"
 API_KEY="${PI_NINFER_API_KEY:-}"
 SERVER_HOST="${PI_NINFER_HOST:-}"
@@ -138,6 +158,22 @@ with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
 os.replace(temporary, path)
 MODELS_PY
 chmod 600 "$AGENT_DIR/models.json"
+PI_CLIENT_REPOSITORY="$REPOSITORY" PI_CLIENT_REF="$REPOSITORY_REF" PI_CLIENT_COMMIT="$SOURCE_COMMIT" \
+python3 - "$AGENT_DIR/client-build.json" <<'BUILD_PY'
+import json, os, pathlib, tempfile, sys
+path = pathlib.Path(sys.argv[1])
+build = {
+    "repository": os.environ["PI_CLIENT_REPOSITORY"],
+    "ref": os.environ["PI_CLIENT_REF"],
+    "commit": os.environ["PI_CLIENT_COMMIT"],
+}
+fd, temporary = tempfile.mkstemp(prefix="client-build.", suffix=".json", dir=path.parent)
+with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+    json.dump(build, handle, indent=2)
+    handle.write("\n")
+os.replace(temporary, path)
+BUILD_PY
+chmod 644 "$AGENT_DIR/client-build.json"
 backup "$AGENT_DIR/extensions/pi-permission-system/config.json"
 cp "$HERE/templates/permission-config.json" "$AGENT_DIR/extensions/pi-permission-system/config.json"
 backup "$AGENT_DIR/subagents.json"
@@ -165,7 +201,7 @@ SETTINGS_PY
 else
   echo "    WARNING: python3 not found; set compaction.reserveTokens=32768 in settings.json by hand"
 fi
-echo "    models.json, permission policy, subagents.json, $(ls "$HERE"/agents/*.md | wc -l) agent types"
+echo "    models.json, client revision, permission policy, subagents.json, $(ls "$HERE"/agents/*.md | wc -l) agent types"
 
 install_extension () {   # $1 = name, rest = dep specs (scope/pkg[:source])
   local name="$1"; shift

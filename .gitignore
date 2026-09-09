@@ -4,6 +4,8 @@ pi-ninfer-client.zip
 # Local Pi configuration and secrets
 models.json
 !templates/models.json
+client-build.json
+client-build-cache.json
 command-judge.json
 auth.json
 .env

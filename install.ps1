@@ -14,26 +14,47 @@ $ErrorActionPreference = "Stop"
 
 $Repository = if ($env:PI_INSTALL_REPOSITORY) { $env:PI_INSTALL_REPOSITORY } else { "rdisruptorpost/pi-ninfer-client" }
 $RepositoryRef = if ($env:PI_INSTALL_REF) { $env:PI_INSTALL_REF } else { "main" }
+$SourceCommit = if ($env:PI_INSTALL_COMMIT) { $env:PI_INSTALL_COMMIT } else { "" }
 $Here = if ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { "" }
 if (-not $Here -or -not (Test-Path "$Here\templates\models.json")) {
   $BootstrapWork = Join-Path $env:TEMP ("pi-install-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
   New-Item -ItemType Directory -Force -Path $BootstrapWork | Out-Null
   try {
-    Write-Host "==> fetching $Repository@$RepositoryRef from GitHub"
+    if (-not $SourceCommit) {
+      $CommitInfo = Invoke-RestMethod `
+        -Uri "https://api.github.com/repos/$Repository/commits/$RepositoryRef" `
+        -Headers @{ Accept = "application/vnd.github+json"; "User-Agent" = "pi-ninfer-client-installer" }
+      $SourceCommit = [string]$CommitInfo.sha
+    }
+    if ($SourceCommit -notmatch '^[0-9a-fA-F]{40}$') {
+      throw "could not resolve an exact Git commit for $Repository@$RepositoryRef"
+    }
+    Write-Host "==> fetching $Repository@$($SourceCommit.Substring(0, 7)) from GitHub"
     $Archive = Join-Path $BootstrapWork "source.zip"
-    Invoke-WebRequest -Uri "https://github.com/$Repository/archive/refs/heads/$RepositoryRef.zip" -OutFile $Archive -UseBasicParsing
+    Invoke-WebRequest -Uri "https://github.com/$Repository/archive/$SourceCommit.zip" -OutFile $Archive -UseBasicParsing
     Expand-Archive -Path $Archive -DestinationPath $BootstrapWork -Force
     $BundledInstaller = Get-ChildItem $BootstrapWork -Recurse -Filter install.ps1 |
       Where-Object { Test-Path (Join-Path $_.DirectoryName "templates\models.json") } |
       Select-Object -First 1
     if (-not $BundledInstaller) { throw "install.ps1 not found in the GitHub archive" }
-    & $BundledInstaller.FullName -Url $Url -ServerHost $ServerHost -ServerPort $ServerPort `
-      -Scheme $Scheme -Key $Key
+    $PreviousCommit = $env:PI_INSTALL_COMMIT
+    try {
+      $env:PI_INSTALL_COMMIT = $SourceCommit
+      & $BundledInstaller.FullName -Url $Url -ServerHost $ServerHost -ServerPort $ServerPort `
+        -Scheme $Scheme -Key $Key
+    } finally {
+      $env:PI_INSTALL_COMMIT = $PreviousCommit
+    }
   } finally {
     Remove-Item $BootstrapWork -Recurse -Force -ErrorAction SilentlyContinue
   }
   return
 }
+
+if ($SourceCommit -notmatch '^[0-9a-fA-F]{40}$' -and (Get-Command git -ErrorAction SilentlyContinue)) {
+  try { $SourceCommit = (& git -C $Here rev-parse HEAD 2>$null).Trim() } catch { $SourceCommit = "" }
+}
+if ($SourceCommit -notmatch '^[0-9a-fA-F]{40}$') { $SourceCommit = "unknown" }
 
 # Windows PowerShell 5.1's Set-Content -Encoding UTF8 writes a BOM (EF BB BF),
 # which every JSON parser rejects. -Encoding utf8NoBOM only exists in PS7, so
@@ -135,6 +156,13 @@ $FreshProvider.apiKey = $Key
 $ModelsPath = "$AgentDir\models.json"
 Write-Utf8NoBom $ModelsPath (($ModelsConfig | ConvertTo-Json -Depth 20) + "`n")
 Assert-ValidJson "$AgentDir\models.json"
+$ClientBuild = [ordered]@{
+  repository = $Repository
+  ref = $RepositoryRef
+  commit = $SourceCommit
+}
+Write-Utf8NoBom "$AgentDir\client-build.json" (($ClientBuild | ConvertTo-Json) + "`n")
+Assert-ValidJson "$AgentDir\client-build.json"
 Backup "$AgentDir\extensions\pi-permission-system\config.json"
 Copy-Item "$Here\templates\permission-config.json" "$AgentDir\extensions\pi-permission-system\config.json" -Force
 Backup "$AgentDir\subagents.json"
@@ -157,7 +185,7 @@ $Settings.compaction | Add-Member -NotePropertyName reserveTokens -NotePropertyV
 Write-Utf8NoBom $SettingsPath ($Settings | ConvertTo-Json -Depth 10)
 Assert-ValidJson $SettingsPath
 Write-Host "    settings.json: compaction.reserveTokens = 32768"
-Write-Host "    models.json, permission policy, subagents.json, agent types"
+Write-Host "    models.json, client revision, permission policy, subagents.json, agent types"
 
 Write-Host "==> installing the command judge"
 $Ext = "$AgentDir\extensions\command-judge"

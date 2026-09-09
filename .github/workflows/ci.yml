@@ -28,6 +28,8 @@ jobs:
         run: python3 tests/install_test.py
       - name: Command-judge tests
         run: node tests/command_judge_test.mjs
+      - name: Client-build tests
+        run: node tests/client_build_test.mjs
       - name: Shell syntax
         run: bash -n install.sh update.sh make-bundle.sh serve.sh
       - name: PowerShell syntax

@@ -14,6 +14,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = Path(os.environ.get("PI_INSTALLER_PATH", ROOT / "install.sh"))
 SERVER_URL = "http://server.example.test"
+TEST_COMMIT = "a" * 40
 
 
 def executable(path: Path, text: str) -> None:
@@ -61,6 +62,7 @@ def fake_environment(base: Path) -> tuple[dict[str, str], Path]:
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
     env["PI_CODING_AGENT_DIR"] = str(agent_dir)
+    env["PI_INSTALL_COMMIT"] = TEST_COMMIT
     return env, agent_dir
 
 
@@ -96,12 +98,19 @@ def main() -> None:
     assert "test-only-key" not in output
     assert "--provider ninfer-rtx6000" in output
     assert (agent / "models.json").stat().st_mode & 0o077 == 0
+    build = json.loads((agent / "client-build.json").read_text(encoding="utf-8"))
+    assert build == {
+        "repository": "rdisruptorpost/pi-ninfer-client",
+        "ref": "main",
+        "commit": TEST_COMMIT,
+    }
+    assert (agent / "extensions" / "ninfer-tui" / "client-build.ts").is_file()
     for extension in (
         "command-judge", "activity", "ninfer-tui", "effort", "digest",
         "fast-compact", "image-window", "auto-continue",
     ):
         assert (agent / "extensions" / extension / "index.ts").is_file(), extension
-    checks += 9
+    checks += 11
 
     existing = {"providers": {"ninfer": {"baseUrl": "http://existing.example.test/v1", "models": []}}}
     replaced, _, replaced_agent = run_install(existing)
