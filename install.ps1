@@ -244,7 +244,7 @@ Copy-Item "$Here\extensions\effort\index.ts" "$Eff\index.ts" -Force
 Write-Utf8NoBom "$Eff\package.json" '{ "name": "effort", "private": true, "type": "module" }'
 New-Item -ItemType Junction -Force -Path "$Eff\node_modules\@earendil-works\pi-coding-agent" -Target $Ca | Out-Null
 if (Test-Path "$Eff\node_modules\@earendil-works\pi-coding-agent\package.json") {
-  Write-Host "    effort (/effort, /thinking commands)"
+  Write-Host "    effort (/effort command)"
 } else { Write-Warning "effort dep unresolved; it will not load" }
 
 Write-Host "==> installing the digest summary"

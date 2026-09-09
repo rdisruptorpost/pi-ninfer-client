@@ -4,7 +4,6 @@
  *   /effort            show the current level and what this model supports
  *   /effort low        set it
  *   /effort off        disable thinking
- *   /thinking medium   same thing, alias
  *
  * Shift+Tab already cycles, but reaching a specific level can take four presses.
  * This is one command. It also names the cost, because on this stack the choice
@@ -101,7 +100,6 @@ export function createEffort(pi: ExtensionAPI): void {
   };
 
   pi.registerCommand("effort", opts);
-  pi.registerCommand("thinking", { ...opts, description: "Alias for /effort" });
 }
 
 export default function (pi: ExtensionAPI) {

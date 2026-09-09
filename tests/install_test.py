@@ -110,7 +110,10 @@ def main() -> None:
         "fast-compact", "image-window", "auto-continue",
     ):
         assert (agent / "extensions" / extension / "index.ts").is_file(), extension
-    checks += 11
+    effort_source = (agent / "extensions" / "effort" / "index.ts").read_text(encoding="utf-8")
+    assert 'registerCommand("effort"' in effort_source
+    assert 'registerCommand("thinking"' not in effort_source
+    checks += 13
 
     existing = {"providers": {"ninfer": {"baseUrl": "http://existing.example.test/v1", "models": []}}}
     replaced, _, replaced_agent = run_install(existing)

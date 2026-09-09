@@ -272,7 +272,7 @@ EFF="$AGENT_DIR/extensions/effort"
 install_extension effort "@earendil-works/pi-coding-agent"
 ln -sfn "$CA" "$EFF/node_modules/@earendil-works/pi-coding-agent"
 [ -e "$EFF/node_modules/@earendil-works/pi-coding-agent/package.json" ] \
-  && echo "    effort (/effort, /thinking commands)" \
+  && echo "    effort (/effort command)" \
   || echo "    WARNING: effort dep unresolved; it will not load"
 
 # digest renders its own transcript entry, so it needs pi-tui as well.
