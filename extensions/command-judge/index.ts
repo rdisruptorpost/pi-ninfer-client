@@ -407,6 +407,7 @@ const WHY: Record<string, string> = {
     "the command exceeds the judge's review budget; PI_JUDGE_MAX_COMMAND_CHARS can raise it",
   "outside-working-directory":
     "this writes outside the working directory, which policy does not permit",
+  "path-unresolved": "the safety check could not resolve the file target",
 };
 
 /** Announce every judge outcome in the TUI, so it is never a silent gate. */
@@ -461,23 +462,96 @@ function announce(
 }
 
 
+type PromptRequest = {
+  surface?: unknown;
+  toolName?: unknown;
+  value?: unknown;
+  executedUnit?: unknown;
+};
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+/** Structured request facts survive when a subagent forwards an ask. */
+function promptRequest(details: PromptPermissionDetails): PromptRequest {
+  const request = (details.payload as any)?.request;
+  return request && typeof request === "object" ? request : {};
+}
+
+/** The gate surface, preferring the child-fixed access facts when present. */
+function permissionSurface(details: PromptPermissionDetails): string | undefined {
+  return nonEmptyString((details as any)?.accessIntent?.surface) ??
+    nonEmptyString(details.surface) ??
+    nonEmptyString(promptRequest(details).surface);
+}
+
+/** Resolve the invoked tool from both local and forwarded request shapes. */
+function permissionTool(details: PromptPermissionDetails): string | undefined {
+  return nonEmptyString(details.toolName) ??
+    nonEmptyString(promptRequest(details).toolName) ??
+    (permissionSurface(details) === "bash" ? "bash" : undefined);
+}
+
+/** Resolve a write/edit target without parsing human-oriented prompt text. */
+function permissionPath(details: PromptPermissionDetails): string | undefined {
+  const direct = nonEmptyString(details.path);
+  if (direct) return direct;
+
+  const payload = details.payload as any;
+  const request = promptRequest(details);
+  if (payload?.kind === "path" || payload?.kind === "external_directory") {
+    return nonEmptyString(request.value);
+  }
+
+  const tool = permissionTool(details);
+  if (tool !== "write" && tool !== "edit") return undefined;
+  const matchValues = (details as any)?.accessIntent?.matchValues;
+  if (Array.isArray(matchValues)) {
+    const target = matchValues.map(nonEmptyString).find((value) => value !== undefined);
+    if (target) return target;
+  }
+  const displayed = nonEmptyString(details.value);
+  return displayed && displayed !== tool ? displayed : undefined;
+}
+
+/** Whether this ask is for a shell command, including aliased shell tools. */
+function isBashAsk(details: PromptPermissionDetails): boolean {
+  const kind = (details.payload as any)?.kind;
+  return permissionSurface(details) === "bash" || permissionTool(details) === "bash" || kind === "bash";
+}
+
 /**
  * The command as it will actually run.
  *
- * `details.command` has had its redirect stripped by the bash parser, so
- * `echo x > file` arrives as `echo x` and reads as harmless. The ask payload
- * carries the real thing under an evidence entry labelled "full command";
- * prefer it, so a redirect cannot smuggle a write past the review.
+ * `details.command` can contain only the parsed command unit, so `echo x >
+ * file` may arrive there as `echo x`. The ask payload carries the enclosing
+ * command under evidence labelled "full command"; prefer it so a redirect
+ * cannot smuggle a write past review. Forwarded subagent asks intentionally
+ * omit the legacy top-level `command` field, but preserve the same structured
+ * payload and its request value.
  */
 function fullCommand(details: PromptPermissionDetails): string | undefined {
-  const evidence = (details.payload as any)?.evidence;
+  const payload = details.payload as any;
+  const evidence = payload?.evidence;
   if (Array.isArray(evidence)) {
     const hit = evidence.find(
       (e: any) => e?.label === "full command" && typeof e?.text === "string" && e.text.trim(),
     );
     if (hit) return hit.text as string;
   }
-  return details.command;
+  const direct = nonEmptyString(details.command);
+  if (direct) return direct;
+
+  // A path-family ask can name bash as its tool while request.value is a path,
+  // not a command. Those surfaces stay capped and must not be reinterpreted.
+  const kind = payload?.kind;
+  if (kind === "bash" || kind === "bash_external_directory" || permissionSurface(details) === "bash") {
+    return nonEmptyString(promptRequest(details).value) ??
+      nonEmptyString(details.value) ??
+      nonEmptyString(promptRequest(details).executedUnit);
+  }
+  return undefined;
 }
 
 
@@ -645,10 +719,12 @@ export function createCommandJudge(pi: ExtensionAPI, deps: JudgeDeps = {}): void
       // those would be noise, not signal.
       if (reason !== "not-a-bash-command") {
         const subject =
-          details.command ??
-          (details.toolName && details.path ? `${details.toolName} ${details.path}` : undefined) ??
-          details.path ??
-          `${details.toolName ?? "tool"} (no path)`;
+          fullCommand(details) ??
+          (permissionTool(details) && permissionPath(details)
+            ? `${permissionTool(details)} ${permissionPath(details)}`
+            : undefined) ??
+          permissionPath(details) ??
+          `${permissionTool(details) ?? "tool"} (no target)`;
         announce(ui, "defer", subject, reason, undefined, undefined);
       }
       return { kind: "defer" } as AuthorizerVerdict;
@@ -656,9 +732,10 @@ export function createCommandJudge(pi: ExtensionAPI, deps: JudgeDeps = {}): void
 
     // write/edit are pure containment questions -- decide them in code rather
     // than spending a model call on a path comparison.
-    const tool = details.toolName;
+    const tool = permissionTool(details);
     if (tool === "write" || tool === "edit") {
-      const target = details.path;
+      const target = permissionPath(details);
+      if (!target) return defer("path-unresolved", { tool });
       const targetDenial = target ? hardDeny(target) : undefined;
       if (targetDenial) return deny(`${tool} ${target}`, targetDenial);
       // In auto mode the working directory stops being a boundary: the operator
@@ -697,15 +774,16 @@ export function createCommandJudge(pi: ExtensionAPI, deps: JudgeDeps = {}): void
     }
 
     const command = fullCommand(details);
-    if (details.toolName !== "bash" || typeof command !== "string" || !command.trim()) {
+    if (!isBashAsk(details) || typeof command !== "string" || !command.trim()) {
       return defer("not-a-bash-command");
     }
     const denial = hardDeny(command);
     if (denial) return deny(command, denial);
 
-    if (details.surface && CAPPED_SURFACES.has(details.surface)) {
+    const surface = permissionSurface(details);
+    if (surface && CAPPED_SURFACES.has(surface)) {
       // An allow here would be downgraded to defer anyway; skip the model call.
-      return defer("capped-surface", { surface: details.surface });
+      return defer("capped-surface", { surface });
     }
     const commandLimit = commandReviewLimit();
     if (command.length > commandLimit) {

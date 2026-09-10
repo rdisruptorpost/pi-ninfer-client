@@ -67,8 +67,10 @@ const pi = {
   on(event, callback) { (handlers[event] ??= []).push(callback); },
 };
 let calls = 0;
-const complete = async () => {
+const reviewedBodies = [];
+const complete = async (_model, context) => {
   calls++;
+  reviewedBodies.push(context.messages[0].content);
   return {
     role: "assistant",
     content: [{
@@ -108,9 +110,100 @@ const verdict = await authorize({
   surface: "bash",
   payload: { evidence: [{ label: "full command", text: command }] },
 }, {}, { debug() {}, review() {} });
-delete process.env.PI_JUDGE_MODE;
 if (verdict.kind !== "allow" || calls !== 1) {
   throw new Error(`judge path failed: verdict=${verdict.kind}, calls=${calls}`);
+}
+
+// A subagent ask is judged by the parent session after forwarding. Current
+// permission-system releases preserve command facts in the structured payload
+// but deliberately omit the legacy top-level toolName/command convenience
+// fields. The judge must read that forwarded shape instead of deferring to a
+// manual prompt.
+const forwardedCommand = "printf ok > result.txt";
+const forwardedVerdict = await authorize({
+  requestId: "forwarded-bash-test",
+  source: "tool_call",
+  agentName: "researcher",
+  payload: {
+    kind: "bash",
+    request: {
+      requester: { agentName: "researcher", forwarded: true, sessionId: "child-session" },
+      surface: "bash",
+      toolName: "bash",
+      invokedToolName: null,
+      value: "printf ok",
+      matchedPattern: "*",
+      commandContext: null,
+      executedUnit: null,
+    },
+    evidence: [{ label: "full command", text: forwardedCommand, detail: null }],
+    annotations: [],
+  },
+  surface: "bash",
+  value: "printf ok",
+  forwarding: { requesterAgentName: "researcher", requesterSessionId: "child-session" },
+  accessIntent: { surface: "bash", matchValues: ["printf ok"], boundaryValue: null },
+}, {}, { debug() {}, review() {} });
+if (forwardedVerdict.kind !== "allow" || calls !== 2) {
+  throw new Error(`forwarded judge path failed: verdict=${forwardedVerdict.kind}, calls=${calls}`);
+}
+if (!String(reviewedBodies.at(-1)).includes(forwardedCommand)) {
+  throw new Error("forwarded judge did not review the full command evidence");
+}
+
+// Forwarding must not weaken deterministic denials. This also proves the full
+// command (rather than the parser's stripped unit) reaches the safety rules.
+const forwardedDenied = await authorize({
+  requestId: "forwarded-denial-test",
+  source: "tool_call",
+  agentName: "researcher",
+  payload: {
+    kind: "bash",
+    request: {
+      requester: { agentName: "researcher", forwarded: true, sessionId: "child-session" },
+      surface: "bash",
+      toolName: "bash",
+      value: "printf unsafe",
+    },
+    evidence: [{ label: "full command", text: "printf unsafe >> ~/.bashrc", detail: null }],
+    annotations: [],
+  },
+  forwarding: { requesterAgentName: "researcher", requesterSessionId: "child-session" },
+  accessIntent: { surface: "bash", matchValues: ["printf unsafe"], boundaryValue: null },
+}, {}, { debug() {}, review() {} });
+if (forwardedDenied.kind !== "deny" || calls !== 2) {
+  throw new Error(`forwarded denial failed: verdict=${forwardedDenied.kind}, calls=${calls}`);
+}
+
+// File tool asks lose the top-level path at the same forwarding boundary. The
+// child-fixed access intent is the authoritative structured fallback.
+const forwardedWrite = await authorize({
+  requestId: "forwarded-write-test",
+  source: "tool_call",
+  agentName: "writer",
+  payload: {
+    kind: "tool",
+    request: {
+      requester: { agentName: "writer", forwarded: true, sessionId: "child-session" },
+      surface: "write",
+      toolName: "write",
+      invokedToolName: null,
+      value: "write",
+      matchedPattern: "*",
+      commandContext: null,
+      executedUnit: null,
+    },
+    evidence: [],
+    annotations: [],
+  },
+  surface: "write",
+  value: "write",
+  forwarding: { requesterAgentName: "writer", requesterSessionId: "child-session" },
+  accessIntent: { surface: "write", matchValues: [join(tmpdir(), "project", "result.txt")], boundaryValue: null },
+}, {}, { debug() {}, review() {} });
+delete process.env.PI_JUDGE_MODE;
+if (forwardedWrite.kind !== "allow" || calls !== 2) {
+  throw new Error(`forwarded write path failed: verdict=${forwardedWrite.kind}, calls=${calls}`);
 }
 
 if (serviceApi.unpublishPermissionsService.length >= 2) {
