@@ -27,11 +27,21 @@ import {
   formatPromptProgress,
   shouldShowPromptProgress,
 } from "./ninfer-progress.js";
+import {
+  attachLiveCommandClick,
+  detachLiveCommandClick,
+  formatLiveBashLabel,
+} from "./live-command.js";
 
 type Ui = {
   notify(message: string, type?: "info" | "warning" | "error"): void;
   setStatus?(key: string, text: string): void;
   setWorkingMessage?(text: string): void;
+  setWidget?(
+    key: string,
+    content: ((tui: any) => { render(width: number): string[]; invalidate(): void; dispose?(): void }) | undefined,
+    options?: { placement?: "aboveEditor" | "belowEditor" },
+  ): void;
 };
 
 type PromptProgress = {
@@ -91,6 +101,8 @@ function describe(toolName: string, args: any): string {
   }
 }
 
+const LIVE_COMMAND_WIDGET = "activity-live-command-click";
+
 export function createActivity(pi: ExtensionAPI): void {
   let ui: Ui | undefined;
 
@@ -129,6 +141,9 @@ export function createActivity(pi: ExtensionAPI): void {
   let anim: { name: string; fn: AnimationFn } | undefined;
   let animFrame = 0;
   let ticker: ReturnType<typeof setInterval> | undefined;
+  let liveBashCommand = "";
+  let liveBashExpanded = false;
+  let liveBashClickable = false;
 
   // chars/4 is the usual rough token ratio; only used for the LIVE figure,
   // which is replaced by the exact count from usage when the turn ends.
@@ -155,6 +170,9 @@ export function createActivity(pi: ExtensionAPI): void {
       if (r0 > 0) suffix.push(`${Math.round(r0)} tok/s`);
       const tail = suffix.length ? "  " + suffix.join(" · ") : "";
       let label = stepLabel || phaseLabel;
+      if (liveBashCommand) {
+        label = formatLiveBashLabel(liveBashCommand, liveBashExpanded, liveBashClickable);
+      }
       if (!stepLabel && phaseLabel === "reading context" && promptTokens > 0) {
         // Before admission this is an honest size estimate and elapsed timer.
         // Once NInfer reports progress, show exact non-cached work instead of
@@ -193,7 +211,10 @@ export function createActivity(pi: ExtensionAPI): void {
       }
     }
     const parts: string[] = [];
-    parts.push(`▸ ${stepLabel || phaseLabel}`);
+    const label = liveBashCommand
+      ? formatLiveBashLabel(liveBashCommand, liveBashExpanded, liveBashClickable)
+      : stepLabel || phaseLabel;
+    parts.push(`▸ ${label}`);
     if (stepStart) parts.push(secs(Date.now() - stepStart));
     const r = liveRate();
     if (r > 0) parts.push(`${Math.round(r)} tok/s`);
@@ -203,7 +224,9 @@ export function createActivity(pi: ExtensionAPI): void {
   const startTicker = () => {
     if (ticker) { clearInterval(ticker); ticker = undefined; }
     // 1s cadence: enough to prove liveness, not enough to churn the terminal.
-    ticker = setInterval(paint, anim ? 90 : 1000);
+    // Do not re-wrap a potentially large expanded command at animation speed.
+    ticker = setInterval(paint, anim && !(liveBashCommand && liveBashExpanded) ? 90 : 1000);
+    paint();
   };
   const stopTicker = () => {
     if (ticker) clearInterval(ticker);
@@ -297,6 +320,32 @@ export function createActivity(pi: ExtensionAPI): void {
 
   pi.on("session_start", (_e: any, ctx: any) => {
     ui = ctx?.ui;
+    // A zero-height widget gives the extension the active TUI object without
+    // changing the layout. In fullscreen mode, Pi already turns OSC 8 links
+    // into application-owned clicks; intercept only our private link and leave
+    // every normal URL on Pi's original opener.
+    try {
+      ui?.setWidget?.(LIVE_COMMAND_WIDGET, (tui: any) => {
+        const toggle = () => {
+          if (!liveBashCommand) return;
+          liveBashExpanded = !liveBashExpanded;
+          startTicker();
+        };
+        return {
+          render: () => {
+            liveBashClickable = attachLiveCommandClick(tui, toggle);
+            return [];
+          },
+          invalidate() {},
+          dispose() {
+            detachLiveCommandClick(tui, toggle);
+            liveBashClickable = false;
+          },
+        };
+      });
+    } catch {
+      liveBashClickable = false;
+    }
     footer();
   });
 
@@ -308,11 +357,12 @@ export function createActivity(pi: ExtensionAPI): void {
     stepLabel = ""; stepStart = Date.now();
     phaseLabel = "reading context"; sawReasoning = false; sawContent = false;
     promptProgress = undefined; prefillRate = 0;
+    liveBashCommand = ""; liveBashExpanded = false;
     anim = Math.random() < ANIM_CHANCE
       ? RARE_ANIMS[Math.floor(Math.random() * RARE_ANIMS.length)]
       : DEFAULT_ANIM;
     animFrame = 0;
-    startTicker(); paint();
+    startTicker();
   });
 
   // streaming deltas drive the live rate
@@ -349,7 +399,12 @@ export function createActivity(pi: ExtensionAPI): void {
 
   pi.on("tool_execution_start", (event: any) => {
     toolCount += 1;
-    stepLabel = describe(event?.toolName ?? "tool", event?.args);
+    const toolName = event?.toolName ?? "tool";
+    stepLabel = describe(toolName, event?.args);
+    liveBashCommand = toolName === "bash"
+      ? String(event?.args?.command ?? event?.args?.cmd ?? "").trim()
+      : "";
+    liveBashExpanded = false;
     phaseLabel = stepLabel;
     stepStart = Date.now();
     paint();
@@ -362,10 +417,11 @@ export function createActivity(pi: ExtensionAPI): void {
       catch { /* ignore */ }
     }
     stepLabel = ""; phaseLabel = "reading context";
+    liveBashCommand = ""; liveBashExpanded = false;
     sawReasoning = false; sawContent = false;
     promptProgress = undefined; prefillRate = 0;
     stepStart = Date.now();
-    paint();
+    startTicker();
   });
 
   pi.on("turn_end", (event: any) => {
@@ -426,7 +482,13 @@ export function createActivity(pi: ExtensionAPI): void {
     footer();
   });
 
-  pi.on("session_shutdown", () => { stopTicker(); });
+  pi.on("session_shutdown", () => {
+    stopTicker();
+    try { ui?.setWidget?.(LIVE_COMMAND_WIDGET, undefined); } catch { /* ignore */ }
+    liveBashCommand = "";
+    liveBashExpanded = false;
+    liveBashClickable = false;
+  });
 }
 
 export default function (pi: ExtensionAPI) {

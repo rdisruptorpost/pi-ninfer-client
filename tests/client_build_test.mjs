@@ -155,13 +155,63 @@ assert.equal(providerRegistrations[0].config.api, "openai-completions");
 assert.equal(typeof providerRegistrations[0].config.streamSimple, "function");
 
 const workingLines = [];
+const openedUrls = [];
+const fullscreenTuiTarget = { mode: "fullscreen", openUrl(url) { openedUrls.push(url); } };
+// Pi passes extension widget factories a stable proxy rather than its renderer
+// directly. Function reads therefore produce wrappers, which is important to
+// exercise here: the click adapter must not stack itself on every render.
+const fullscreenTui = new Proxy({}, {
+  get(_target, property) {
+    const value = Reflect.get(fullscreenTuiTarget, property, fullscreenTuiTarget);
+    return typeof value === "function"
+      ? (...args) => Reflect.apply(value, fullscreenTuiTarget, args)
+      : value;
+  },
+  set(_target, property, value) {
+    return Reflect.set(fullscreenTuiTarget, property, value, fullscreenTuiTarget);
+  },
+});
+let activityWidget;
 activityHandlers.get("session_start")({}, {
   ui: {
-    setWorkingMessage(line) { workingLines.push(line.replace(/\x1b\[[0-9;]*m/g, "")); },
+    setWorkingMessage(line) {
+      workingLines.push(line
+        .replace(/\x1b\]8;;.*?(?:\x07|\x1b\\)/g, "")
+        .replace(/\x1b\[[0-9;]*m/g, ""));
+    },
+    setWidget(_key, content) {
+      if (content === undefined) {
+        activityWidget?.dispose?.();
+        activityWidget = undefined;
+        return;
+      }
+      activityWidget = content(fullscreenTui);
+      activityWidget.render(120);
+      activityWidget.render(120);
+    },
     notify() {},
   },
 });
 activityHandlers.get("turn_start")({ turnIndex: 1 });
+
+const liveCommand = "printf '%s' one two three four five six seven eight nine ten live-command-tail";
+activityHandlers.get("tool_execution_start")({
+  toolName: "bash",
+  toolCallId: "live-command-test",
+  args: { command: liveCommand },
+});
+assert.ok(workingLines.at(-1).includes("click to expand"));
+assert.ok(!workingLines.at(-1).includes("live-command-tail"));
+fullscreenTui.openUrl("pi://activity/live-command");
+assert.ok(workingLines.at(-1).includes(liveCommand));
+assert.ok(workingLines.at(-1).includes("click to collapse"));
+fullscreenTui.openUrl("https://example.test/docs");
+assert.deepEqual(openedUrls, ["https://example.test/docs"]);
+activityHandlers.get("tool_execution_end")({
+  toolName: "bash",
+  toolCallId: "live-command-test",
+  isError: false,
+});
 
 let sentPayload;
 const completionId = "chatcmpl-progress-test";
@@ -206,6 +256,9 @@ const stream = providerRegistrations[0].config.streamSimple(model, {
 const streamedEvents = [];
 for await (const event of stream) streamedEvents.push(event);
 activityHandlers.get("session_shutdown")();
+fullscreenTui.openUrl("pi://activity/live-command");
+fullscreenTui.openUrl("https://example.test/after-shutdown");
+assert.deepEqual(openedUrls, ["https://example.test/docs", "https://example.test/after-shutdown"]);
 
 assert.equal(sentPayload.return_progress, true);
 assert.ok(workingLines.some((line) => line.includes("5.0k/13k new")));

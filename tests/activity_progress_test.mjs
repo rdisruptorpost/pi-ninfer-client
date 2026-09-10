@@ -5,6 +5,37 @@ import {
   parsePromptProgressEvent,
   shouldShowPromptProgress,
 } from "../extensions/activity/ninfer-progress.js";
+import {
+  attachLiveCommandClick,
+  compactLiveCommand,
+  detachLiveCommandClick,
+  formatLiveBashLabel,
+  LIVE_COMMAND_URL,
+} from "../extensions/activity/live-command.js";
+
+const longCommand = "printf '%s\\n' one two three four five six seven eight nine ten eleven twelve";
+assert.equal(compactLiveCommand("one\n  two\tthree", 12), "one two thr…");
+assert.match(formatLiveBashLabel(longCommand), /^bash · .*…$/);
+assert.equal(formatLiveBashLabel("one\ntwo", true), "bash · one\ntwo");
+assert.match(formatLiveBashLabel(longCommand, false, true), /click to expand/);
+assert.match(formatLiveBashLabel(longCommand, true, true), /click to collapse/);
+
+const opened = [];
+let toggles = 0;
+const originalOpenUrl = (url) => opened.push(url);
+const fullscreenTui = { mode: "fullscreen", openUrl: originalOpenUrl };
+const toggle = () => { toggles += 1; };
+assert.equal(attachLiveCommandClick(fullscreenTui, toggle), true);
+fullscreenTui.openUrl(LIVE_COMMAND_URL);
+fullscreenTui.openUrl("https://example.test/docs");
+assert.equal(toggles, 1);
+assert.deepEqual(opened, ["https://example.test/docs"]);
+detachLiveCommandClick(fullscreenTui, toggle);
+fullscreenTui.openUrl(LIVE_COMMAND_URL);
+fullscreenTui.openUrl("https://example.test/after-detach");
+assert.equal(toggles, 1);
+assert.deepEqual(opened, ["https://example.test/docs", "https://example.test/after-detach"]);
+assert.equal(attachLiveCommandClick({ mode: "regular", openUrl: originalOpenUrl }, toggle), false);
 
 const progressEvent =
   'data: {"choices":[{"delta":{}}],"prompt_progress":' +
