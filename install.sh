@@ -248,6 +248,7 @@ install_extension activity "@earendil-works/pi-coding-agent" "@earendil-works/pi
 cp "$HERE"/extensions/activity/anim.ts "$ACT"/ 2>/dev/null || true
 cp "$HERE"/extensions/activity/ninfer-progress.js "$ACT"/
 cp "$HERE"/extensions/activity/live-command.js "$ACT"/
+cp "$HERE"/extensions/activity/live-rate.js "$ACT"/
 cp "$HERE"/extensions/activity/LICENSE.animations "$ACT"/ 2>/dev/null || true
 ln -sfn "$CA" "$ACT/node_modules/@earendil-works/pi-coding-agent"
 ln -sfn "$CA/node_modules/@earendil-works/pi-ai" "$ACT/node_modules/@earendil-works/pi-ai"

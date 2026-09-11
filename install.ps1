@@ -221,6 +221,7 @@ Copy-Item "$Here\extensions\activity\index.ts" "$Act\index.ts" -Force
 Copy-Item "$Here\extensions\activity\anim.ts" "$Act\anim.ts" -Force
 Copy-Item "$Here\extensions\activity\ninfer-progress.js" "$Act\ninfer-progress.js" -Force
 Copy-Item "$Here\extensions\activity\live-command.js" "$Act\live-command.js" -Force
+Copy-Item "$Here\extensions\activity\live-rate.js" "$Act\live-rate.js" -Force
 Copy-Item "$Here\extensions\activity\LICENSE.animations" "$Act\LICENSE.animations" -Force -ErrorAction SilentlyContinue
 Write-Utf8NoBom "$Act\package.json" '{ "name": "activity", "private": true, "type": "module" }'
 New-Item -ItemType Junction -Force -Path "$Act\node_modules\@earendil-works\pi-coding-agent" -Target $Ca | Out-Null

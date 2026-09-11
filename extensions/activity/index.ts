@@ -32,6 +32,7 @@ import {
   detachLiveCommandClick,
   formatLiveBashLabel,
 } from "./live-command.js";
+import { LiveTokenRate, liveRateWindowMs } from "./live-rate.js";
 
 type Ui = {
   notify(message: string, type?: "info" | "warning" | "error"): void;
@@ -115,6 +116,7 @@ export function createActivity(pi: ExtensionAPI): void {
   let activeMs = 0;           // time spent actually streaming, gaps excluded
   let toolCount = 0;
   let lastSeenLen = new Map<string, number>();
+  const liveTokenRate = new LiveTokenRate(liveRateWindowMs());
 
   // per-session
   let sessionTokens = 0;
@@ -154,10 +156,9 @@ export function createActivity(pi: ExtensionAPI): void {
   // measuring through those understates decode throughput badly (28 tok/s
   // against a server-reported 211).
   const GAP_MAX_MS = 2000;
-  const liveRate = () => {
-    if (!turnChars || activeMs < 300) return 0;
-    return estTokens(turnChars) / (activeMs / 1000);
-  };
+  // Unlike the completed-turn measurement, the visible number intentionally
+  // covers only a short recent window so concurrency slowdowns show promptly.
+  const liveRate = () => liveTokenRate.rate();
 
   const paint = () => {
     if (!ui?.setWorkingMessage) return;
@@ -167,7 +168,7 @@ export function createActivity(pi: ExtensionAPI): void {
       const suffix: string[] = [];
       if (stepStart) suffix.push(secs(Date.now() - stepStart));
       const r0 = liveRate();
-      if (r0 > 0) suffix.push(`${Math.round(r0)} tok/s`);
+      if (r0 !== undefined) suffix.push(`${Math.round(r0)} tok/s`);
       const tail = suffix.length ? "  " + suffix.join(" · ") : "";
       let label = stepLabel || phaseLabel;
       if (liveBashCommand) {
@@ -217,7 +218,7 @@ export function createActivity(pi: ExtensionAPI): void {
     parts.push(`▸ ${label}`);
     if (stepStart) parts.push(secs(Date.now() - stepStart));
     const r = liveRate();
-    if (r > 0) parts.push(`${Math.round(r)} tok/s`);
+    if (r !== undefined) parts.push(`${Math.round(r)} tok/s`);
     try { ui.setWorkingMessage(parts.join(" · ")); } catch { /* ignore */ }
   };
 
@@ -358,6 +359,7 @@ export function createActivity(pi: ExtensionAPI): void {
     phaseLabel = "reading context"; sawReasoning = false; sawContent = false;
     promptProgress = undefined; prefillRate = 0;
     liveBashCommand = ""; liveBashExpanded = false;
+    liveTokenRate.reset();
     anim = Math.random() < ANIM_CHANCE
       ? RARE_ANIMS[Math.floor(Math.random() * RARE_ANIMS.length)]
       : DEFAULT_ANIM;
@@ -391,7 +393,9 @@ export function createActivity(pi: ExtensionAPI): void {
       }
       else if (lastDeltaAt && now - lastDeltaAt < GAP_MAX_MS) activeMs += now - lastDeltaAt;
       lastDeltaAt = now;
-      turnChars += len - prev;
+      const deltaChars = len - prev;
+      turnChars += deltaChars;
+      liveTokenRate.add(deltaChars, now);
       lastSeenLen.set(id, len);
       if (!stepLabel) phaseLabel = sawContent ? "writing" : sawReasoning ? "thinking" : "generating";
     }
@@ -405,6 +409,9 @@ export function createActivity(pi: ExtensionAPI): void {
       ? String(event?.args?.command ?? event?.args?.cmd ?? "").trim()
       : "";
     liveBashExpanded = false;
+    // A decode-rate figure beside a running tool is stale by definition. The
+    // next model response begins a fresh rolling sample after the tool ends.
+    liveTokenRate.reset();
     phaseLabel = stepLabel;
     stepStart = Date.now();
     paint();
@@ -418,6 +425,7 @@ export function createActivity(pi: ExtensionAPI): void {
     }
     stepLabel = ""; phaseLabel = "reading context";
     liveBashCommand = ""; liveBashExpanded = false;
+    liveTokenRate.reset();
     sawReasoning = false; sawContent = false;
     promptProgress = undefined; prefillRate = 0;
     stepStart = Date.now();
@@ -488,6 +496,7 @@ export function createActivity(pi: ExtensionAPI): void {
     liveBashCommand = "";
     liveBashExpanded = false;
     liveBashClickable = false;
+    liveTokenRate.reset();
   });
 }
 

@@ -107,6 +107,7 @@ def main() -> None:
     assert (agent / "extensions" / "ninfer-tui" / "client-build.ts").is_file()
     assert (agent / "extensions" / "activity" / "ninfer-progress.js").is_file()
     assert (agent / "extensions" / "activity" / "live-command.js").is_file()
+    assert (agent / "extensions" / "activity" / "live-rate.js").is_file()
     assert (
         agent / "extensions" / "activity" / "node_modules" /
         "@earendil-works" / "pi-ai" / "package.json"
@@ -119,7 +120,7 @@ def main() -> None:
     effort_source = (agent / "extensions" / "effort" / "index.ts").read_text(encoding="utf-8")
     assert 'registerCommand("effort"' in effort_source
     assert 'registerCommand("thinking"' not in effort_source
-    checks += 16
+    checks += 17
 
     existing = {"providers": {"ninfer": {"baseUrl": "http://existing.example.test/v1", "models": []}}}
     replaced, _, replaced_agent = run_install(existing)

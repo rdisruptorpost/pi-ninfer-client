@@ -12,6 +12,28 @@ import {
   formatLiveBashLabel,
   LIVE_COMMAND_URL,
 } from "../extensions/activity/live-command.js";
+import {
+  LiveTokenRate,
+  liveRateWindowMs,
+} from "../extensions/activity/live-rate.js";
+
+assert.equal(liveRateWindowMs(undefined), 2000);
+assert.equal(liveRateWindowMs("250"), 500);
+assert.equal(liveRateWindowMs("25000"), 10000);
+assert.equal(liveRateWindowMs("invalid"), 2000);
+
+const liveRate = new LiveTokenRate(2000, 300);
+liveRate.add(40, 0);
+for (let at = 100; at <= 2000; at += 100) liveRate.add(40, at);
+assert.equal(liveRate.rate(2000), 100, "steady 100 tok/s stream");
+for (let at = 2100; at <= 3000; at += 100) liveRate.add(2, at);
+assert.equal(liveRate.rate(3000), 52.5, "window should react midway through a slowdown");
+for (let at = 3100; at <= 4000; at += 100) liveRate.add(2, at);
+assert.equal(liveRate.rate(4000), 5, "window should fully reflect the slower stream in two seconds");
+assert.equal(liveRate.rate(5000), 2.5, "rate should decay while no deltas arrive");
+assert.equal(liveRate.rate(6000), 0, "a sustained stall should visibly reach zero");
+liveRate.reset();
+assert.equal(liveRate.rate(7000), undefined);
 
 const longCommand = "printf '%s\\n' one two three four five six seven eight nine ten eleven twelve";
 assert.equal(compactLiveCommand("one\n  two\tthree", 12), "one two thr…");

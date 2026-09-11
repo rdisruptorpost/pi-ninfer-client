@@ -80,12 +80,16 @@ Restart Pi after an install or update so every extension is reloaded.
 | permission policy | broad read access, guarded writes, and hard-denied credential paths |
 | command judge | model-reviewed shell commands with `safe` and `auto` postures |
 | NInfer TUI | client revision, model, effort, cache/performance, and judge status in the terminal UI |
-| activity | exact cached/prefill progress and ETA, clickable live bash commands in fullscreen mode, plus generation/tool throughput telemetry |
+| activity | exact cached/prefill progress and ETA, responsive 2-second live throughput, clickable bash commands, and turn telemetry |
 | fast compact | cache-friendly compaction with a bounded cold fallback |
 | image window | drops old request images before the media budget is exhausted |
 | auto continue | resumes responses that stop at the output limit |
 | digest | optional short companion summaries for long responses |
 | subagents | bounded concurrency and research/writing agent presets |
+
+The live decode counter uses a two-second rolling window. Set
+`PI_ACTIVITY_LIVE_WINDOW_MS` before launching Pi to tune it from 500 to 10000
+milliseconds; completed-turn and session telemetry remain whole-run averages.
 
 Use `alt+a` or `/mode safe|auto` to change the command-judge posture. `/mode`
 also reports whether the judge is connected. `AUTO!` in the footer means the
