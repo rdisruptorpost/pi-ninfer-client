@@ -74,6 +74,21 @@ const configuredProgressDelay = Number(process.env.PI_ACTIVITY_PROGRESS_DELAY_MS
 const PROGRESS_DELAY_MS = Number.isFinite(configuredProgressDelay) && configuredProgressDelay >= 0
   ? configuredProgressDelay
   : 1000;
+const CONTEXT_PAYLOAD_LISTENERS = Symbol.for("pi-ninfer.context-payload-listeners");
+
+/** Publish the exact body handed to fetch without putting it in another log. */
+function publishContextPayload(payload: unknown): void {
+  try {
+    const listeners = (globalThis as Record<symbol, unknown>)[CONTEXT_PAYLOAD_LISTENERS];
+    if (!(listeners instanceof Set)) return;
+    const capture = { payload, capturedAt: Date.now() };
+    for (const listener of listeners) {
+      try {
+        if (typeof listener === "function") listener(capture);
+      } catch { /* an inspector must never affect inference */ }
+    }
+  } catch { /* an inspector must never affect inference */ }
+}
 
 const N = (n: number) => n.toLocaleString("en-US");
 const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
@@ -264,9 +279,12 @@ export function createActivity(pi: ExtensionAPI): void {
         const replacement = await originalOnPayload?.(payload, requestModel);
         const finalPayload = replacement ?? payload;
         if (typeof finalPayload !== "object" || finalPayload === null || Array.isArray(finalPayload)) {
+          publishContextPayload(finalPayload);
           return finalPayload;
         }
-        return { ...finalPayload, return_progress: true };
+        const wirePayload = { ...finalPayload, return_progress: true };
+        publishContextPayload(wirePayload);
+        return wirePayload;
       },
     });
   };

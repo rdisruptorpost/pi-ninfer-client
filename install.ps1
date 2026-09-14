@@ -235,13 +235,16 @@ if (-not $activityMissing) {
 Write-Host "==> installing ninfer-tui"
 $Tui = "$AgentDir\extensions\ninfer-tui"
 Remove-LinkOrDir "$Tui\node_modules\@earendil-works\pi-coding-agent"
+Remove-LinkOrDir "$Tui\node_modules\@earendil-works\pi-tui"
 New-Item -ItemType Directory -Force -Path "$Tui\node_modules\@earendil-works" | Out-Null
 Copy-Item "$Here\extensions\ninfer-tui\*" $Tui -Force -Exclude "node_modules"
 Write-Utf8NoBom "$Tui\package.json" '{ "name": "ninfer-tui", "private": true, "type": "module" }'
 New-Item -ItemType Junction -Force -Path "$Tui\node_modules\@earendil-works\pi-coding-agent" -Target $Ca | Out-Null
-if (Test-Path "$Tui\node_modules\@earendil-works\pi-coding-agent\package.json") {
+New-Item -ItemType Junction -Force -Path "$Tui\node_modules\@earendil-works\pi-tui" -Target "$Ca\node_modules\@earendil-works\pi-tui" | Out-Null
+if ((Test-Path "$Tui\node_modules\@earendil-works\pi-coding-agent\package.json") -and
+    (Test-Path "$Tui\node_modules\@earendil-works\pi-tui\package.json")) {
   Write-Host "    ninfer-tui (themed header/footer, tok/s instead of cost)"
-} else { Write-Warning "ninfer-tui dep unresolved; it will not load" }
+} else { Write-Warning "ninfer-tui deps unresolved; it will not load" }
 
 Write-Host "==> installing the effort command"
 $Eff = "$AgentDir\extensions\effort"

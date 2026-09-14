@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { checkClientBuild, readInstalledClientBuild, type ClientBuild } from "./client-build.ts";
 import { type OpenTuiConfig, DEFAULT_CONFIG, ensureConfigExists, loadConfig, saveConfig } from "./config.ts";
+import { createContextInspector } from "./context-inspector.ts";
 import { installEditor } from "./editor.ts";
 import { installFooter } from "./footer.ts";
 import { installHeader, type HeaderController } from "./header.ts";
@@ -66,6 +67,11 @@ export default function (pi: ExtensionAPI) {
 	let editor: ReturnType<typeof installEditor> | undefined;
 	let pendingUiChange: PendingUiChange | undefined;
 	let clientBuild: ClientBuild | undefined;
+	const contextInspector = createContextInspector(
+		pi,
+		() => editor?.getTui(),
+		() => editor?.getEditor(),
+	);
 
 	const getThinkingLevel = () => (sessionLifecycle.isCurrent() ? pi.getThinkingLevel() : "off");
 
@@ -186,6 +192,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		applyUi(ctx);
+		contextInspector.start(ctx);
 
 		refreshInteractiveState(ctx, true);
 		if (interactive && clientBuild) {
@@ -200,6 +207,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async (_event, ctx) => {
 		sessionLifecycle.shutdown();
 		stopWorkingTimer();
+		contextInspector.stop();
 		if (active) {
 			uninstallUi(ctx);
 		}
@@ -280,14 +288,20 @@ export default function (pi: ExtensionAPI) {
 		refreshInteractiveState(ctx);
 	});
 
-	pi.on("session_compact", (_event, ctx) => {
+	pi.on("session_before_compact", (event) => {
+		contextInspector.beforeCompact(event);
+	});
+
+	pi.on("session_compact", (event, ctx) => {
 		if (!sessionLifecycle.isCurrent()) return;
+		contextInspector.afterCompact(event);
 		invalidateUsageCache();
 		refreshInteractiveState(ctx);
 	});
 
 	pi.on("session_tree", (_event, ctx) => {
 		if (!sessionLifecycle.isCurrent()) return;
+		contextInspector.branchChanged(ctx);
 		invalidateUsageCache();
 		refreshInteractiveState(ctx);
 	});

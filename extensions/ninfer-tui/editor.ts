@@ -171,6 +171,12 @@ export function installEditor(
 		return activeEditor;
 	});
 	return {
+		getTui(): TUI | undefined {
+			return activeTui;
+		},
+		getEditor(): OpenTuiEditor | undefined {
+			return activeEditor;
+		},
 		setCursorStyle(nextCursorStyle: CursorStyle): void {
 			currentCursorStyle = nextCursorStyle;
 			activeEditor?.setCursorStyle(nextCursorStyle, previousHardwareCursor);

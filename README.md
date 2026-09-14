@@ -79,7 +79,7 @@ Restart Pi after an install or update so every extension is reloaded.
 | model provider | Qwen3.8-27B text and image input with explicit thinking levels |
 | permission policy | broad read access, guarded writes, and hard-denied credential paths |
 | command judge | model-reviewed shell commands with `safe` and `auto` postures |
-| NInfer TUI | client revision, model, effort, cache/performance, and judge status in the terminal UI |
+| NInfer TUI | client revision, model, effort, cache/performance, judge status, and a context/compaction inspector |
 | activity | exact cached/prefill progress and ETA, responsive 2-second live throughput, clickable bash commands, and turn telemetry |
 | fast compact | cache-friendly compaction with a bounded cold fallback |
 | image window | drops old request images before the media budget is exhausted |
@@ -90,6 +90,14 @@ Restart Pi after an install or update so every extension is reloaded.
 The live decode counter uses a two-second rolling window. Set
 `PI_ACTIVITY_LIVE_WINDOW_MS` before launching Pi to tune it from 500 to 10000
 milliseconds; completed-turn and session telemetry remain whole-run averages.
+
+Use `/context` to open the read-only right-side Context Inspector. Its `live`
+view shows the exact messages and tool definitions in the most recent provider
+request; its `diff` view shows the generated compaction summary (`+`), raw
+messages it replaced (`-`), and recent messages Pi kept verbatim (`=`). The
+panel does not make model requests or write conversation content to another
+log. Use Tab to switch views, the arrow/Page keys to scroll, Esc to return to
+the editor while leaving it visible, and `q` or `/context off` to close it.
 
 Use `alt+a` or `/mode safe|auto` to change the command-judge posture. `/mode`
 also reports whether the judge is connected. `AUTO!` in the footer means the

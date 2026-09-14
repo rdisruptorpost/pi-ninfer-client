@@ -263,7 +263,7 @@ done
 # ninfer-tui is multi-file, so it is copied wholesale rather than via
 # install_extension (which handles single index.ts extensions).
 TUI="$AGENT_DIR/extensions/ninfer-tui"
-for dep in "@earendil-works/pi-coding-agent"; do
+for dep in "@earendil-works/pi-coding-agent" "@earendil-works/pi-tui"; do
   t="$TUI/node_modules/$dep"
   if [ -L "$t" ]; then rm -f "$t"; elif [ -d "$t" ]; then rm -rf "$t"; fi
 done
@@ -272,9 +272,14 @@ cp "$HERE"/extensions/ninfer-tui/*.ts "$TUI"/
 cp "$HERE"/extensions/ninfer-tui/*.md "$HERE"/extensions/ninfer-tui/LICENSE.upstream "$TUI"/ 2>/dev/null || true
 printf '{ "name": "ninfer-tui", "private": true, "type": "module" }\n' > "$TUI/package.json"
 ln -sfn "$CA" "$TUI/node_modules/@earendil-works/pi-coding-agent"
-[ -e "$TUI/node_modules/@earendil-works/pi-coding-agent/package.json" ] \
+ln -sfn "$CA/node_modules/@earendil-works/pi-tui" "$TUI/node_modules/@earendil-works/pi-tui"
+tui_ok=1
+for m in @earendil-works/pi-coding-agent @earendil-works/pi-tui; do
+  [ -e "$TUI/node_modules/$m/package.json" ] || tui_ok=0
+done
+[ "$tui_ok" = 1 ] \
   && echo "    ninfer-tui (themed header/footer, tok/s instead of \$cost)" \
-  || echo "    WARNING: ninfer-tui dep unresolved; it will not load"
+  || echo "    WARNING: ninfer-tui deps unresolved; it will not load"
 
 EFF="$AGENT_DIR/extensions/effort"
 install_extension effort "@earendil-works/pi-coding-agent"

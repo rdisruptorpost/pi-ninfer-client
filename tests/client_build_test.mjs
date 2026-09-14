@@ -106,7 +106,102 @@ symlinkSync(
 );
 await jiti.import(join(tuiWork, "index.ts"));
 const iconsModule = await jiti.import(join(tuiWork, "icons.ts"));
+const contextInspectorModule = await jiti.import(join(tuiWork, "context-inspector.ts"));
 assert.equal(iconsModule.resolveGlyphs("nerd").throughput, "\u{F04C5}");
+
+const inspectPayload = {
+  tools: [{ type: "function", function: { name: "read", description: "Read a file", parameters: { type: "object" } } }],
+  messages: [
+    { role: "system", content: "System instructions" },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "Describe this" },
+        { type: "image_url", image_url: { url: `data:image/png;base64,${"A".repeat(200)}` } },
+      ],
+    },
+    { role: "assistant", reasoning_content: "Consider the request", content: "Answer", tool_calls: [] },
+  ],
+};
+const inspectStats = contextInspectorModule.payloadStats(inspectPayload);
+assert.equal(inspectStats.messages, 3);
+assert.equal(inspectStats.tools, 1);
+assert.equal(inspectStats.images, 1);
+const inspectBlocks = contextInspectorModule.payloadBlocks(inspectPayload);
+assert.ok(inspectBlocks.some((block) => block.label === "[assistant · reasoning_content]"));
+assert.ok(inspectBlocks.some((block) => block.text.includes("image/png media")));
+assert.ok(!inspectBlocks.some((block) => block.text.includes("A".repeat(100))));
+const compactBlocks = contextInspectorModule.compactionBlocks({
+  reason: "threshold",
+  tokensBefore: 229500,
+  summary: "## Goal\nKeep the work moving.",
+  replacedMessages: [{ role: "user", content: "Old request" }],
+  keptMessages: [{ role: "assistant", content: [{ type: "text", text: "Recent answer" }] }],
+  capturedAt: Date.now(),
+});
+assert.deepEqual(new Set(compactBlocks.map((block) => block.marker)), new Set(["+", "-", "="]));
+
+const inspectorCommands = new Map();
+let inspectorPanel;
+let inspectorOverlayOptions;
+let inspectorFocused = false;
+let inspectorHidden = false;
+const inspectorTui = {
+  mode: "fullscreen",
+  terminal: { columns: 140, rows: 30 },
+  showOverlay(component, options) {
+    inspectorPanel = component;
+    inspectorOverlayOptions = options;
+    return {
+      hide() { inspectorHidden = true; inspectorFocused = false; },
+      setHidden(hidden) { inspectorHidden = hidden; },
+      isHidden() { return inspectorHidden; },
+      focus() { inspectorFocused = true; component.focused = true; },
+      unfocus() { inspectorFocused = false; component.focused = false; },
+      isFocused() { return inspectorFocused; },
+    };
+  },
+  requestRender() {},
+};
+const inspectorEditor = { render() { return []; }, invalidate() {} };
+const inspectorController = contextInspectorModule.createContextInspector(
+  { registerCommand(name, command) { inspectorCommands.set(name, command); } },
+  () => inspectorTui,
+  () => inspectorEditor,
+);
+const inspectorContext = {
+  ui: {
+    theme: { fg(_color, text) { return text; }, bold(text) { return text; } },
+    notify() {},
+  },
+  sessionManager: { getBranch() { return []; } },
+};
+inspectorController.start(inspectorContext);
+for (const listener of globalThis[Symbol.for("pi-ninfer.context-payload-listeners")]) {
+  listener({ payload: inspectPayload, capturedAt: Date.now() });
+}
+await inspectorCommands.get("context").handler("live", inspectorContext);
+assert.equal(inspectorOverlayOptions.anchor, "right-center");
+assert.equal(inspectorFocused, true);
+assert.ok(inspectorPanel.render(64).join("\n").includes("LIVE WIRE CONTEXT"));
+inspectorController.beforeCompact({
+  reason: "threshold",
+  preparation: {
+    tokensBefore: 229500,
+    firstKeptEntryId: "kept-entry",
+    messagesToSummarize: [{ role: "user", content: "Old request" }],
+    turnPrefixMessages: [],
+  },
+  branchEntries: [{ id: "kept-entry", type: "message", message: { role: "assistant", content: "Recent answer" } }],
+});
+inspectorController.afterCompact({
+  reason: "threshold",
+  compactionEntry: { summary: "## Goal\nKeep the work moving.", tokensBefore: 229500, firstKeptEntryId: "kept-entry" },
+});
+assert.ok(inspectorPanel.render(64).join("\n").includes("COMPACTION DIFF"));
+assert.ok(inspectorPanel.render(64).join("\n").includes("generated compaction summary"));
+inspectorController.stop();
+assert.equal(inspectorHidden, true);
 
 const terminalEnvironment = {
   TERM_PROGRAM: process.env.TERM_PROGRAM,
@@ -214,6 +309,9 @@ activityHandlers.get("tool_execution_end")({
 });
 
 let sentPayload;
+const contextCaptures = [];
+const contextPayloadListeners = Symbol.for("pi-ninfer.context-payload-listeners");
+globalThis[contextPayloadListeners] = new Set([(capture) => contextCaptures.push(capture)]);
 const completionId = "chatcmpl-progress-test";
 const sse = [
   { id: completionId, model: "qwen3.8-27b", choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] },
@@ -261,6 +359,9 @@ fullscreenTui.openUrl("https://example.test/after-shutdown");
 assert.deepEqual(openedUrls, ["https://example.test/docs", "https://example.test/after-shutdown"]);
 
 assert.equal(sentPayload.return_progress, true);
+assert.equal(contextCaptures.length, 1);
+assert.deepEqual(JSON.parse(JSON.stringify(contextCaptures[0].payload)), sentPayload);
+delete globalThis[contextPayloadListeners];
 assert.ok(workingLines.some((line) => line.includes("5.0k/13k new")));
 const doneEvent = streamedEvents.find((event) => event.type === "done");
 assert.equal(doneEvent.message.content.find((part) => part.type === "text").text, "OK");
